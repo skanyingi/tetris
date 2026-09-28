@@ -1,0 +1,48 @@
+Build a complete, polished Tetris game as a single-page frontend web app, ready to deploy on Vercel or Netlify.
+
+TECH STACK
+- Plain HTML/CSS/JS (or React if you prefer — your call), no backend, static site only
+- No build step required if possible, or a minimal Vite setup if using React
+- Must run entirely client-side
+
+CORE GAMEPLAY
+- Standard 10x20 playing field
+- All 7 tetrominoes (I, O, T, S, Z, J, L) with correct rotation states (SRS-style rotation preferred)
+- Piece spawning with a "next piece" preview (show next 1–3 pieces)
+- Hold piece functionality (swap current piece to a hold slot, once per drop)
+- Ghost piece showing where the current piece will land
+- Soft drop (down arrow) and hard drop (space bar)
+- Line clearing with animation, including multi-line and Tetris (4-line) clears
+- Increasing speed/level as lines clear (standard gravity curve)
+- Scoring system matching modern Tetris scoring (single/double/triple/tetris, soft/hard drop bonus, combo bonus)
+- Game over detection when pieces stack to the top
+
+CONTROLS
+- Arrow keys: move left/right, soft drop
+- Up arrow or X: rotate clockwise, Z: rotate counter-clockwise
+- Space: hard drop
+- C or Shift: hold piece
+- P: pause
+- On-screen touch controls for mobile (buttons for move/rotate/drop)
+
+LOCAL STORAGE REQUIREMENTS
+- Persist high score across sessions using localStorage
+- Persist a small local leaderboard (e.g. top 10 scores with initials/name and date)
+- Persist user settings (e.g. key bindings, sound on/off, ghost piece on/off) in localStorage
+- Handle localStorage gracefully if unavailable (private browsing) — fail silently, don't crash
+
+UI/UX
+- Clean, modern visual design — pick a cohesive theme (e.g. dark neon, minimalist, retro CRT) rather than default browser styling
+- Responsive layout that works on desktop and mobile screen sizes
+- Show current score, level, lines cleared, next piece(s), hold piece, and high score on screen
+- Pause menu and game-over screen with "play again" and final score/rank
+- Optional: subtle sound effects and background music (toggleable, muted by default for autoplay policy)
+
+CODE QUALITY
+- Organize code into clear modules/files (game logic, rendering, input handling, storage)
+- Comment key game logic (collision detection, rotation system, line clear detection)
+- No console errors, no memory leaks from intervals/animation frames (clean up on pause/unmount)
+
+DELIVERABLE
+- Give me the full file structure and all code needed to deploy immediately on Vercel or Netlify (static build)
+- Include a short README with setup/run/deploy instructions

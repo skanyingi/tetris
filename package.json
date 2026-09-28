@@ -1,0 +1,13 @@
+{
+  "name": "neon-tetris",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A dependency-free Tetris with SRS rotation, hold, ghost piece and a local leaderboard.",
+  "scripts": {
+    "dev": "node tools/serve.js",
+    "test": "node tools/test.js && node tools/dom-test.js",
+    "test:logic": "node tools/test.js",
+    "test:dom": "node tools/dom-test.js"
+  }
+}

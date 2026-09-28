@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="A polished, dependency-free Tetris with SRS rotation, a ghost piece and back-to-back scoring."
+    />
+    <meta name="theme-color" content="#05070e" />
+    <title>Neon Tetris</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2305070e'/%3E%3Crect x='5' y='7' width='7' height='7' rx='2' fill='%2322d3ee'/%3E%3Crect x='13' y='7' width='7' height='7' rx='2' fill='%23a855f7'/%3E%3Crect x='13' y='15' width='7' height='7' rx='2' fill='%23fb923c'/%3E%3Crect x='21' y='15' width='7' height='7' rx='2' fill='%2322c55e'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="css/base.css" />
+    <link rel="stylesheet" href="css/hud.css" />
+    <link rel="stylesheet" href="css/overlays.css" />
+    <link rel="stylesheet" href="css/touch.css" />
+  </head>
+  <body>
+    <div class="aurora" aria-hidden="true"></div>
+
+    <div class="app">
+      <p id="boot-failure" class="boot-failure is-hidden" role="alert">
+        <strong>The game could not start.</strong>
+        This page is built from ES modules, and browsers refuse to load those
+        from the filesystem (<code>file://</code>). Open it over HTTP instead:
+        <code>npm run dev</code> from the project folder, then visit
+        <code>http://localhost:4173</code>.
+      </p>
+
+      <!-- ------------------------------------------------------------- HUD -->
+      <header class="hud">
+        <div class="hud__brand">
+          <span class="hud__logo" aria-hidden="true"></span>
+          <span class="hud__title">Neon<em>Tetris</em></span>
+        </div>
+        <dl class="hud__stats">
+          <div class="stat stat--wide">
+            <dt>Score</dt>
+            <dd id="hud-score">0</dd>
+          </div>
+          <div class="stat">
+            <dt>High</dt>
+            <dd id="hud-high">0</dd>
+          </div>
+          <div class="stat">
+            <dt>Level</dt>
+            <dd id="hud-level">1</dd>
+          </div>
+          <div class="stat">
+            <dt>Lines</dt>
+            <dd id="hud-lines">0</dd>
+          </div>
+        </dl>
+        <div class="hud__actions">
+          <button type="button" class="icon-btn" data-nav="pause" aria-label="Pause">❚❚</button>
+          <button type="button" class="icon-btn" data-nav="settings" aria-label="Settings">⚙</button>
+        </div>
+      </header>
+
+      <!-- ----------------------------------------------------------- stage -->
+      <main class="stage">
+        <aside class="rail rail--left">
+          <section class="panel panel--keys">
+            <h2 class="panel__title">Controls</h2>
+            <ul class="keyhints">
+              <li><kbd>←</kbd><kbd>→</kbd> move</li>
+              <li><kbd>↓</kbd> soft drop</li>
+              <li><kbd>Space</kbd> hard drop</li>
+              <li><kbd>↑</kbd> rotate CW</li>
+              <li><kbd>Z</kbd> rotate CCW</li>
+              <li><kbd>A</kbd> rotate 180</li>
+              <li><kbd>P</kbd> pause</li>
+            </ul>
+          </section>
+        </aside>
+
+        <div class="board-frame">
+          <canvas
+            id="board"
+            class="board"
+            role="img"
+            aria-label="Playfield, 10 columns by 20 rows"
+          ></canvas>
+          <div id="hud-combo" class="combo"><span>Combo</span><b>0</b></div>
+        </div>
+
+        <aside class="rail rail--right">
+          <section class="panel panel--scoring">
+            <h2 class="panel__title">Scoring</h2>
+            <ul class="scorecard">
+              <li><span>Single</span><b>100</b></li>
+              <li><span>Double</span><b>300</b></li>
+              <li><span>Triple</span><b>500</b></li>
+              <li><span class="is-tetris">Tetris</span><b class="is-tetris">800</b></li>
+              <li><span>Combo</span><b>×50</b></li>
+              <li><span>Back to back</span><b>×1.5</b></li>
+            </ul>
+          </section>
+        </aside>
+      </main>
+
+      <!-- -------------------------------------------------------- touchpad -->
+      <div class="touchpad" id="touchpad" role="group" aria-label="Touch controls">
+        <button type="button" class="pad-btn" data-action="left" aria-label="Move left">◀</button>
+        <button type="button" class="pad-btn" data-action="softDrop" aria-label="Soft drop">▼</button>
+        <button type="button" class="pad-btn" data-action="right" aria-label="Move right">▶</button>
+        <button type="button" class="pad-btn pad-btn--wide" data-action="rotateCCW" aria-label="Rotate counter-clockwise">↺</button>
+        <button type="button" class="pad-btn pad-btn--wide" data-action="rotateCW" aria-label="Rotate clockwise">↻</button>
+        <button type="button" class="pad-btn pad-btn--drop" data-action="hardDrop" aria-label="Hard drop">DROP</button>
+      </div>
+
+      <footer class="footer">
+        <p id="storage-note" class="notice is-hidden">
+          Storage is blocked in this browser, so scores and settings last only for this session.
+        </p>
+        <p class="footer__hint"><kbd>P</kbd> pause · <kbd>Enter</kbd> start / restart</p>
+      </footer>
+    </div>
+
+    <!-- ---------------------------------------------------------- screens -->
+    <div class="screen" id="screen-start">
+      <div class="modal">
+        <h1 class="modal__title">Neon<em>Tetris</em></h1>
+        <p class="modal__lede">
+          Super rotation, ghost piece and back-to-back bonuses.
+        </p>
+        <div class="modal__actions">
+          <button type="button" class="btn btn--primary" data-nav="newgame" data-autofocus>Play</button>
+          <button type="button" class="btn" data-nav="settings">Settings</button>
+        </div>
+        <p class="modal__note">Muted by default. Turn sound on in Settings.</p>
+      </div>
+    </div>
+
+    <div class="screen" id="screen-pause">
+      <div class="modal">
+        <h2 class="modal__title modal__title--sm">Paused</h2>
+        <div class="modal__actions">
+          <button type="button" class="btn btn--primary" data-nav="resume" data-autofocus>Resume</button>
+          <button type="button" class="btn" data-nav="newgame">Restart</button>
+          <button type="button" class="btn" data-nav="settings">Settings</button>
+          <button type="button" class="btn btn--ghost" data-nav="menu">Main menu</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="screen" id="screen-gameover">
+      <div class="modal modal--wide">
+        <h2 class="modal__title modal__title--sm">
+          Game over <span id="record-badge" class="badge is-hidden">New record</span>
+        </h2>
+        <p class="final">
+          <span id="final-score">0</span>
+        </p>
+        <dl class="final__grid">
+          <div><dt>Level</dt><dd id="final-level">1</dd></div>
+          <div><dt>Lines</dt><dd id="final-lines">0</dd></div>
+          <div><dt>High</dt><dd id="final-high">0</dd></div>
+          <div><dt>Time</dt><dd id="final-duration">0:00</dd></div>
+        </dl>
+
+        <ul class="breakdown">
+          <li><span>Pieces</span><b id="stat-pieces">0</b></li>
+          <li><span>Singles</span><b id="stat-singles">0</b></li>
+          <li><span>Doubles</span><b id="stat-doubles">0</b></li>
+          <li><span>Triples</span><b id="stat-triples">0</b></li>
+          <li><span>Tetrises</span><b id="stat-tetrises">0</b></li>
+        </ul>
+
+        <div class="modal__actions">
+          <button type="button" class="btn btn--primary" data-nav="newgame" data-autofocus>Play again</button>
+          <button type="button" class="btn btn--ghost" data-nav="menu">Main menu</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="screen screen--scroll" id="screen-settings">
+      <div class="modal">
+        <button
+          type="button"
+          class="icon-btn modal__close"
+          data-nav="close"
+          aria-label="Close settings"
+        >
+          ✕
+        </button>
+        <h2 class="modal__title modal__title--sm">Settings</h2>
+
+        <div class="settings">
+          <label class="switch">
+            <input type="checkbox" id="set-sound" />
+            <span>Sound effects</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="set-ghost" />
+            <span>Ghost piece</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="set-grid" />
+            <span>Grid lines</span>
+          </label>
+
+          <label class="field">
+            <span>Auto-shift delay (DAS) <b id="set-das-value">150 ms</b></span>
+            <input type="range" id="set-das" min="0" max="400" step="10" />
+          </label>
+
+          <label class="field">
+            <span>Auto-shift rate (ARR) <b id="set-arr-value">33 ms</b></span>
+            <input type="range" id="set-arr" min="1" max="150" step="1" />
+          </label>
+        </div>
+
+        <h3 class="modal__subtitle">Key bindings</h3>
+        <ul id="keybinding-list" class="keybindings"></ul>
+        <p class="modal__note">Click a key, then press the one you want.</p>
+
+        <div class="modal__actions">
+          <button type="button" class="btn btn--primary" data-nav="close">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="announce" class="visually-hidden" role="status" aria-live="polite"></div>
+
+    <!--
+      A classic script, deliberately not a module: it has to run even when the
+      module graph below is blocked, which is exactly the case it reports.
+    -->
+    <script>
+      window.addEventListener('load', function () {
+        // main.js flags the document as booted; if that never happens, the
+        // module failed to load and the page would otherwise sit there dead.
+        setTimeout(function () {
+          if (document.documentElement.dataset.gameBooted) return;
+          var notice = document.getElementById('boot-failure');
+          if (notice) notice.classList.remove('is-hidden');
+        }, 250);
+      });
+    </script>
+    <script type="module" src="js/main.js"></script>
+  </body>
+</html>

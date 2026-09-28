@@ -1,0 +1,195 @@
+/* ==========================================================================
+   HUD: top bar, stat readouts, side panels
+   ========================================================================== */
+
+.hud {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--gap);
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+}
+
+.hud__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.hud__logo {
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 5px;
+  background:
+    linear-gradient(135deg, var(--accent) 0 50%, transparent 50%),
+    linear-gradient(315deg, var(--accent-2) 0 50%, transparent 50%);
+  box-shadow: 0 0 14px -2px rgba(34, 211, 238, 0.8);
+}
+
+.hud__title {
+  font-size: 1.23rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.hud__title em {
+  font-style: normal;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hud__stats {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(0.88rem, 3vw, 2.25rem);
+  margin: 0;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  min-width: 3.2rem;
+}
+
+.stat dt {
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.stat dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 1.44rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+.stat--wide dd {
+  font-size: 2rem;
+  color: #fff;
+  text-shadow: 0 0 18px rgba(34, 211, 238, 0.5);
+}
+
+.hud__actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border: 1px solid var(--panel-line-strong);
+  border-radius: var(--radius-sm);
+  font-size: 1.06rem;
+  color: var(--ink-dim);
+  background: rgba(148, 197, 255, 0.06);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.icon-btn:hover {
+  color: #fff;
+  border-color: var(--accent);
+  background: rgba(34, 211, 238, 0.16);
+}
+
+.keyhints {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9rem;
+  color: var(--ink-dim);
+}
+
+.keyhints li {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+}
+
+.scorecard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.93rem;
+}
+
+.scorecard li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--ink-dim);
+}
+
+.scorecard b {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.scorecard .is-tetris {
+  color: var(--accent);
+  text-shadow: 0 0 14px rgba(34, 211, 238, 0.6);
+}
+
+@media (max-width: 900px) {
+  .hud {
+    grid-template-columns: 1fr auto;
+    row-gap: 0.4rem;
+  }
+
+  .hud__brand {
+    order: 1;
+  }
+
+  .hud__actions {
+    order: 2;
+  }
+
+  .hud__stats {
+    order: 3;
+    grid-column: 1 / -1;
+    justify-content: space-between;
+    gap: 0.4rem;
+  }
+
+  .stat--wide dd {
+    font-size: 1.69rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .hud__title {
+    font-size: 1.06rem;
+  }
+
+  .hud__stats {
+    gap: 0.2rem;
+  }
+
+  .stat {
+    min-width: 2.6rem;
+  }
+}

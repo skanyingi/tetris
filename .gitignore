@@ -1,0 +1,9 @@
+# There is nothing to install — the game is dependency-free static files.
+# These entries are here so a stray editor or CLI tool does not get committed.
+node_modules/
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.vercel/
+.netlify/
+*.local

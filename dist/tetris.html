@@ -1,0 +1,3347 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="A polished, dependency-free Tetris with SRS rotation, a ghost piece and back-to-back scoring."
+    />
+    <meta name="theme-color" content="#05070e" />
+    <title>Neon Tetris</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2305070e'/%3E%3Crect x='5' y='7' width='7' height='7' rx='2' fill='%2322d3ee'/%3E%3Crect x='13' y='7' width='7' height='7' rx='2' fill='%23a855f7'/%3E%3Crect x='13' y='15' width='7' height='7' rx='2' fill='%23fb923c'/%3E%3Crect x='21' y='15' width='7' height='7' rx='2' fill='%2322c55e'/%3E%3C/svg%3E"
+    />
+    <style>
+/* css/base.css */
+/* ==========================================================================
+   Base: reset, design tokens, page shell, stage layout
+   ========================================================================== */
+
+:root {
+  --void: #05070e;
+  --void-2: #0a0f1c;
+  --ink: #e6f0ff;
+  --ink-dim: #8ea3c4;
+  --ink-faint: #5a6d8c;
+
+  --accent: #22d3ee;
+  --accent-2: #a855f7;
+
+  --panel: rgba(148, 197, 255, 0.045);
+  --panel-line: rgba(148, 197, 255, 0.12);
+  --panel-line-strong: rgba(148, 197, 255, 0.24);
+
+  --radius: 14px;
+  --radius-sm: 9px;
+  --gap: clamp(0.75rem, 2vw, 1.38rem);
+
+  --font: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+  --glow: 0 0 0 1px rgba(34, 211, 238, 0.28), 0 8px 30px -12px rgba(34, 211, 238, 0.55);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  color: var(--ink);
+  background: var(--void);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Soft coloured wash behind everything, so the flat black has some depth. */
+.aurora {
+  position: fixed;
+  inset: -20%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(38% 32% at 22% 18%, rgba(34, 211, 238, 0.16), transparent 70%),
+    radial-gradient(34% 30% at 80% 22%, rgba(168, 85, 247, 0.15), transparent 70%),
+    radial-gradient(46% 36% at 50% 96%, rgba(59, 130, 246, 0.13), transparent 72%);
+  filter: blur(12px);
+}
+
+.app {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  gap: var(--gap);
+  padding: var(--gap) clamp(0.75rem, 2.5vw, 2rem);
+  max-width: 1180px;
+  margin-inline: auto;
+}
+
+.stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  justify-items: center;
+  gap: var(--gap);
+  min-height: 0;
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  width: min(100%, 190px);
+  min-height: 0;
+}
+
+/* The board is sized by height so it always fits the viewport, and the canvas
+   keeps a 1:2 aspect ratio to match the 10x20 field. */
+.board-frame {
+  position: relative;
+  height: 100%;
+  aspect-ratio: 1 / 2;
+  max-width: 100%;
+  border-radius: var(--radius);
+  padding: 0;
+  background: rgba(5, 7, 14, 0.6);
+  box-shadow:
+    0 0 0 1px var(--panel-line),
+    0 30px 70px -30px rgba(0, 0, 0, 0.9),
+    0 0 60px -20px rgba(34, 211, 238, 0.25);
+}
+
+.board {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius);
+}
+
+.combo {
+  position: absolute;
+  top: 0.75rem;
+  left: 50%;
+  translate: -50% 0;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.88rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #0a0f1c;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  opacity: 0;
+  scale: 0.85;
+  transition: opacity 0.18s ease, scale 0.18s ease;
+  pointer-events: none;
+}
+
+.combo.is-visible {
+  opacity: 1;
+  scale: 1;
+}
+
+.combo b {
+  font-family: var(--font-mono);
+  font-size: 1.19rem;
+}
+
+/* ------------------------------------------------------------- shared bits --- */
+
+/*
+  Revealed only by the inline watchdog in index.html, when the ES module graph
+  failed to load — which is what happens when the file is opened directly.
+*/
+.boot-failure {
+  margin: 0;
+  padding: 0.8rem 1rem;
+  border: 1px solid rgba(251, 146, 60, 0.45);
+  border-radius: var(--radius);
+  font-size: 1.05rem;
+  line-height: 1.6;
+  color: #fed7aa;
+  background: rgba(251, 146, 60, 0.12);
+}
+
+.boot-failure strong {
+  display: block;
+  margin-bottom: 0.2rem;
+  color: #fdba74;
+}
+
+.boot-failure code {
+  padding: 0.1em 0.4em;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  color: #fff;
+  background: rgba(5, 7, 14, 0.6);
+}
+
+.panel {
+  padding: 0.7rem 0.8rem 0.85rem;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+}
+
+.panel__title {
+  margin: 0 0 0.55rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}.is-hidden {
+  display: none !important;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 1.5em;
+  padding: 0.1em 0.35em;
+  border: 1px solid var(--panel-line-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--ink-dim);
+  background: rgba(148, 197, 255, 0.07);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.93rem;
+  color: var(--ink-faint);
+}
+
+.footer p {
+  margin: 0;
+}
+
+.notice {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid rgba(251, 146, 60, 0.35);
+  border-radius: var(--radius-sm);
+  color: #fdba74;
+  background: rgba(251, 146, 60, 0.1);
+}
+
+/* ------------------------------------------------------------ responsive --- */
+
+@media (max-width: 900px) {
+  .stage {
+    grid-template-columns: auto;
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .rail {
+    display: none;
+  }
+}
+
+@media (max-height: 620px) {
+  .panel--keys,
+  .panel--scoring {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+
+/* css/hud.css */
+/* ==========================================================================
+   HUD: top bar, stat readouts, side panels, next queue
+   ========================================================================== */
+
+.hud {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--gap);
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+}
+
+.hud__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.hud__logo {
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 5px;
+  background:
+    linear-gradient(135deg, var(--accent) 0 50%, transparent 50%),
+    linear-gradient(315deg, var(--accent-2) 0 50%, transparent 50%);
+  box-shadow: 0 0 14px -2px rgba(34, 211, 238, 0.8);
+}
+
+.hud__title {
+  font-size: 1.23rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.hud__title em {
+  font-style: normal;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hud__stats {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(0.88rem, 3vw, 2.25rem);
+  margin: 0;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  min-width: 3.2rem;
+}
+
+.stat dt {
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.stat dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 1.44rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+.stat--wide dd {
+  font-size: 2rem;
+  color: #fff;
+  text-shadow: 0 0 18px rgba(34, 211, 238, 0.5);
+}
+
+.hud__actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border: 1px solid var(--panel-line-strong);
+  border-radius: var(--radius-sm);
+  font-size: 1.06rem;
+  color: var(--ink-dim);
+  background: rgba(148, 197, 255, 0.06);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.icon-btn:hover {
+  color: #fff;
+  border-color: var(--accent);
+  background: rgba(34, 211, 238, 0.16);
+}
+
+.keyhints {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9rem;
+  color: var(--ink-dim);
+}
+
+.keyhints li {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+}
+
+.scorecard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.93rem;
+}
+
+.scorecard li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--ink-dim);
+}
+
+.scorecard b {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.scorecard .is-tetris {
+  color: var(--accent);
+  text-shadow: 0 0 14px rgba(34, 211, 238, 0.6);
+}
+
+@media (max-width: 900px) {
+  .hud {
+    grid-template-columns: 1fr auto;
+    row-gap: 0.4rem;
+  }
+
+  .hud__brand {
+    order: 1;
+  }
+
+  .hud__actions {
+    order: 2;
+  }
+
+  .hud__stats {
+    order: 3;
+    grid-column: 1 / -1;
+    justify-content: space-between;
+    gap: 0.4rem;
+  }
+
+  .stat--wide dd {
+    font-size: 1.69rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .hud__title {
+    font-size: 1.06rem;
+  }
+
+  .hud__stats {
+    gap: 0.2rem;
+  }
+
+  .stat {
+    min-width: 2.6rem;
+  }
+}
+
+
+/* css/overlays.css */
+/* ==========================================================================
+   Overlays: start, pause, game over, settings
+   ========================================================================== */
+
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: clamp(0.8rem, 3vw, 2rem);
+  background: rgba(3, 5, 11, 0.72);
+  backdrop-filter: blur(10px);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.screen.is-open {
+  opacity: 1;
+  visibility: visible;
+}
+
+.screen--scroll {
+  align-items: start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.modal {
+  position: relative;
+  width: min(100%, 400px);
+  padding: clamp(1.38rem, 3.75vw, 2.25rem);
+  border: 1px solid var(--panel-line-strong);
+  border-radius: calc(var(--radius) + 4px);
+  background: linear-gradient(180deg, rgba(16, 24, 42, 0.95), rgba(7, 11, 21, 0.97));
+  box-shadow: 0 30px 90px -30px #000, var(--glow);
+  text-align: center;
+  transform: translateY(8px) scale(0.98);
+  transition: transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+/* Corner dismiss, for dialogs that do not need a decision from the player. */
+.modal__close {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  z-index: 1;
+  width: 2.1rem;
+  height: 2.1rem;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--ink-faint);
+}
+
+.modal__close:hover {
+  color: #fff;
+  border-color: #f43f5e;
+  background: rgba(244, 63, 94, 0.18);
+}
+
+.screen.is-open .modal {
+  transform: none;
+}
+
+.modal--wide {
+  width: min(100%, 480px);
+}
+
+.modal__title {
+  margin: 0 0 0.4rem;
+  font-size: clamp(2.13rem, 6.25vw, 2.88rem);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.modal__title em {
+  font-style: normal;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.modal__title--sm {
+  font-size: clamp(1.45rem, 4.1vw, 1.85rem);
+}
+
+/* Room for the corner dismiss so it never sits on the heading. */
+#screen-settings .modal__title {
+  padding-right: 2.6rem;
+}
+
+
+.modal__subtitle {
+  margin: 1.2rem 0 0.5rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.modal__lede {
+  margin: 0 0 1.2rem;
+  font-size: 1.1rem;
+  line-height: 1.55;
+  color: var(--ink-dim);
+}
+
+.modal__note {
+  margin: 0.9rem 0 0;
+  font-size: 0.9rem;
+  color: var(--ink-faint);
+}
+
+.modal__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-top: 1.1rem;
+}
+
+/* ----------------------------------------------------------------- buttons --- */
+
+.btn {
+  padding: 0.6rem 1.1rem;
+  border: 1px solid var(--panel-line-strong);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 1.08rem;
+  font-weight: 600;
+  color: var(--ink);
+  background: rgba(148, 197, 255, 0.08);
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.btn:hover {
+  border-color: var(--accent);
+  background: rgba(34, 211, 238, 0.14);
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn--primary {
+  border-color: transparent;
+  color: #04121a;
+  background: linear-gradient(135deg, var(--accent), #38bdf8 55%, var(--accent-2));
+  box-shadow: 0 10px 26px -12px rgba(34, 211, 238, 0.9);
+}
+
+.btn--primary:hover {
+  filter: brightness(1.08);
+  background: linear-gradient(135deg, var(--accent), #38bdf8 55%, var(--accent-2));
+}
+
+.btn--ghost {
+  color: var(--ink-faint);
+  background: transparent;
+  border-color: var(--panel-line);
+}
+
+.badge {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  color: #04121a;
+  background: linear-gradient(90deg, #fbbf24, #fb923c);
+}
+
+/* --------------------------------------------------------------- game over --- */
+
+.final {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.6rem;
+  margin: 0.4rem 0 1rem;
+  font-family: var(--font-mono);
+  font-size: clamp(2.5rem, 10vw, 3.5rem);
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  text-shadow: 0 0 30px rgba(34, 211, 238, 0.5);
+}.final__grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.4rem;
+  margin: 0 0 1rem;
+  padding: 0.7rem;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius-sm);
+  background: rgba(148, 197, 255, 0.04);
+}
+
+.final__grid > div {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.15rem;
+}
+
+.final__grid dt {
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.final__grid dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 1.19rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.3rem 0.9rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.93rem;
+  color: var(--ink-dim);
+}
+
+.breakdown li {
+  display: flex;
+  gap: 0.35rem;
+  align-items: baseline;
+}
+
+.breakdown b {
+  font-family: var(--font-mono);
+  color: var(--ink);
+}/* --------------------------------------------------------------- settings --- */
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  text-align: left;
+}
+
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 1.08rem;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.switch input {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.98rem;
+  color: var(--ink-dim);
+}
+
+.field b {
+  float: right;
+  font-family: var(--font-mono);
+  color: var(--accent);
+}
+
+.field select,
+.field input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.field select {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--panel-line-strong);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 1.02rem;
+  color: var(--ink);
+  background: rgba(5, 7, 14, 0.7);
+}
+
+.keybindings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.keybinding {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-size: 1rem;
+  color: var(--ink-dim);
+}
+
+.keybinding__key {
+  min-width: 4.4rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--panel-line-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.98rem;
+  color: var(--ink);
+  background: rgba(148, 197, 255, 0.07);
+  cursor: pointer;
+}
+
+.keybinding__key:hover {
+  border-color: var(--accent);
+}
+
+.keybinding__key.is-listening {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(34, 211, 238, 0.12);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* css/touch.css */
+/* ==========================================================================
+   Touch pad: shown on coarse pointers and narrow viewports only
+   ========================================================================== */
+
+.touchpad {
+  display: none;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.4rem;
+  padding: 0.5rem;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  /* Stops double-tap zoom and scroll-jacking while the pad is in use. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.pad-btn {
+  display: grid;
+  place-items: center;
+  min-height: 3rem;
+  padding: 0;
+  border: 1px solid var(--panel-line-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 1.13rem;
+  font-weight: 700;
+  color: var(--ink-dim);
+  background: rgba(148, 197, 255, 0.07);
+  cursor: pointer;
+  /* The pad is the only place these styles matter; keeping transitions short
+     means the pressed state feels immediate. */
+  transition: background 0.1s ease, color 0.1s ease, transform 0.1s ease;
+}
+
+.pad-btn.is-pressed {
+  color: #04121a;
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  transform: scale(0.96);
+}
+
+.pad-btn--wide {
+  font-size: 1.5rem;
+}
+
+.pad-btn--drop {
+  /* Spans the full second row so it reads as the primary action. */
+  grid-column: 1 / -1;
+  color: #04121a;
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent-2), var(--accent));
+}
+
+.pad-btn--drop.is-pressed {
+  filter: brightness(1.2);
+}
+
+/* Coarse pointer (touch, stylus) or a phone-width screen gets the pad. */
+@media (pointer: coarse), (max-width: 900px) {
+  .touchpad {
+    display: grid;
+  }
+}
+
+@media (max-width: 460px) {
+  .app {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+
+  .touchpad {
+    gap: 0.3rem;
+    padding: 0.4rem;
+  }
+
+  .pad-btn {
+    min-height: 2.9rem;
+    font-size: 1.02rem;
+  }
+}
+
+/* Landscape phones are short: give the board the height and shrink the pad. */
+@media (pointer: coarse) and (max-height: 520px) {
+  .pad-btn {
+    min-height: 2.4rem;
+  }
+
+  .hud {
+    padding: 0.35rem 0.6rem;
+  }
+}
+
+  </style>
+  </head>
+  <body>
+    <div class="aurora" aria-hidden="true"></div>
+
+    <div class="app">
+      <p id="boot-failure" class="boot-failure is-hidden" role="alert">
+        <strong>The game could not start.</strong>
+        This page is built from ES modules, and browsers refuse to load those
+        from the filesystem (<code>file://</code>). Open it over HTTP instead:
+        <code>npm run dev</code> from the project folder, then visit
+        <code>http://localhost:4173</code>.
+      </p>
+
+      <!-- ------------------------------------------------------------- HUD -->
+      <header class="hud">
+        <div class="hud__brand">
+          <span class="hud__logo" aria-hidden="true"></span>
+          <span class="hud__title">Neon<em>Tetris</em></span>
+        </div>
+        <dl class="hud__stats">
+          <div class="stat stat--wide">
+            <dt>Score</dt>
+            <dd id="hud-score">0</dd>
+          </div>
+          <div class="stat">
+            <dt>High</dt>
+            <dd id="hud-high">0</dd>
+          </div>
+          <div class="stat">
+            <dt>Level</dt>
+            <dd id="hud-level">1</dd>
+          </div>
+          <div class="stat">
+            <dt>Lines</dt>
+            <dd id="hud-lines">0</dd>
+          </div>
+        </dl>
+        <div class="hud__actions">
+          <button type="button" class="icon-btn" data-nav="pause" aria-label="Pause">❚❚</button>
+          <button type="button" class="icon-btn" data-nav="settings" aria-label="Settings">⚙</button>
+        </div>
+      </header>
+
+      <!-- ----------------------------------------------------------- stage -->
+      <main class="stage">
+        <aside class="rail rail--left">
+          <section class="panel panel--keys">
+            <h2 class="panel__title">Controls</h2>
+            <ul class="keyhints">
+              <li><kbd>←</kbd><kbd>→</kbd> move</li>
+              <li><kbd>↓</kbd> soft drop</li>
+              <li><kbd>Space</kbd> hard drop</li>
+              <li><kbd>↑</kbd> rotate CW</li>
+              <li><kbd>Z</kbd> rotate CCW</li>
+              <li><kbd>A</kbd> rotate 180</li>
+              <li><kbd>P</kbd> pause</li>
+            </ul>
+          </section>
+        </aside>
+
+        <div class="board-frame">
+          <canvas
+            id="board"
+            class="board"
+            role="img"
+            aria-label="Playfield, 10 columns by 20 rows"
+          ></canvas>
+          <div id="hud-combo" class="combo"><span>Combo</span><b>0</b></div>
+        </div>
+
+        <aside class="rail rail--right">
+          <section class="panel panel--scoring">
+            <h2 class="panel__title">Scoring</h2>
+            <ul class="scorecard">
+              <li><span>Single</span><b>100</b></li>
+              <li><span>Double</span><b>300</b></li>
+              <li><span>Triple</span><b>500</b></li>
+              <li><span class="is-tetris">Tetris</span><b class="is-tetris">800</b></li>
+              <li><span>Combo</span><b>×50</b></li>
+              <li><span>Back to back</span><b>×1.5</b></li>
+            </ul>
+          </section>
+        </aside>
+      </main>
+
+      <!-- -------------------------------------------------------- touchpad -->
+      <div class="touchpad" id="touchpad" role="group" aria-label="Touch controls">
+        <button type="button" class="pad-btn" data-action="left" aria-label="Move left">◀</button>
+        <button type="button" class="pad-btn" data-action="softDrop" aria-label="Soft drop">▼</button>
+        <button type="button" class="pad-btn" data-action="right" aria-label="Move right">▶</button>
+        <button type="button" class="pad-btn pad-btn--wide" data-action="rotateCCW" aria-label="Rotate counter-clockwise">↺</button>
+        <button type="button" class="pad-btn pad-btn--wide" data-action="rotateCW" aria-label="Rotate clockwise">↻</button>
+        <button type="button" class="pad-btn pad-btn--drop" data-action="hardDrop" aria-label="Hard drop">DROP</button>
+      </div>
+
+      <footer class="footer">
+        <p id="storage-note" class="notice is-hidden">
+          Storage is blocked in this browser, so scores and settings last only for this session.
+        </p>
+        <p class="footer__hint"><kbd>P</kbd> pause · <kbd>Enter</kbd> start / restart</p>
+      </footer>
+    </div>
+
+    <!-- ---------------------------------------------------------- screens -->
+    <div class="screen" id="screen-start">
+      <div class="modal">
+        <h1 class="modal__title">Neon<em>Tetris</em></h1>
+        <p class="modal__lede">
+          Super rotation, ghost piece and back-to-back bonuses.
+        </p>
+        <div class="modal__actions">
+          <button type="button" class="btn btn--primary" data-nav="newgame" data-autofocus>Play</button>
+          <button type="button" class="btn" data-nav="settings">Settings</button>
+        </div>
+        <p class="modal__note">Muted by default. Turn sound on in Settings.</p>
+      </div>
+    </div>
+
+    <div class="screen" id="screen-pause">
+      <div class="modal">
+        <h2 class="modal__title modal__title--sm">Paused</h2>
+        <div class="modal__actions">
+          <button type="button" class="btn btn--primary" data-nav="resume" data-autofocus>Resume</button>
+          <button type="button" class="btn" data-nav="newgame">Restart</button>
+          <button type="button" class="btn" data-nav="settings">Settings</button>
+          <button type="button" class="btn btn--ghost" data-nav="menu">Main menu</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="screen" id="screen-gameover">
+      <div class="modal modal--wide">
+        <h2 class="modal__title modal__title--sm">
+          Game over <span id="record-badge" class="badge is-hidden">New record</span>
+        </h2>
+        <p class="final">
+          <span id="final-score">0</span>
+        </p>
+        <dl class="final__grid">
+          <div><dt>Level</dt><dd id="final-level">1</dd></div>
+          <div><dt>Lines</dt><dd id="final-lines">0</dd></div>
+          <div><dt>High</dt><dd id="final-high">0</dd></div>
+          <div><dt>Time</dt><dd id="final-duration">0:00</dd></div>
+        </dl>
+
+        <ul class="breakdown">
+          <li><span>Pieces</span><b id="stat-pieces">0</b></li>
+          <li><span>Singles</span><b id="stat-singles">0</b></li>
+          <li><span>Doubles</span><b id="stat-doubles">0</b></li>
+          <li><span>Triples</span><b id="stat-triples">0</b></li>
+          <li><span>Tetrises</span><b id="stat-tetrises">0</b></li>
+        </ul>
+
+        <div class="modal__actions">
+          <button type="button" class="btn btn--primary" data-nav="newgame" data-autofocus>Play again</button>
+          <button type="button" class="btn btn--ghost" data-nav="menu">Main menu</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="screen screen--scroll" id="screen-settings">
+      <div class="modal">
+        <button
+          type="button"
+          class="icon-btn modal__close"
+          data-nav="close"
+          aria-label="Close settings"
+        >
+          ✕
+        </button>
+        <h2 class="modal__title modal__title--sm">Settings</h2>
+
+        <div class="settings">
+          <label class="switch">
+            <input type="checkbox" id="set-sound" />
+            <span>Sound effects</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="set-ghost" />
+            <span>Ghost piece</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="set-grid" />
+            <span>Grid lines</span>
+          </label>
+
+          <label class="field">
+            <span>Auto-shift delay (DAS) <b id="set-das-value">150 ms</b></span>
+            <input type="range" id="set-das" min="0" max="400" step="10" />
+          </label>
+
+          <label class="field">
+            <span>Auto-shift rate (ARR) <b id="set-arr-value">33 ms</b></span>
+            <input type="range" id="set-arr" min="1" max="150" step="1" />
+          </label>
+        </div>
+
+        <h3 class="modal__subtitle">Key bindings</h3>
+        <ul id="keybinding-list" class="keybindings"></ul>
+        <p class="modal__note">Click a key, then press the one you want.</p>
+
+        <div class="modal__actions">
+          <button type="button" class="btn btn--primary" data-nav="close">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="announce" class="visually-hidden" role="status" aria-live="polite"></div>
+
+    <!--
+      A classic script, deliberately not a module: it has to run even when the
+      module graph below is blocked, which is exactly the case it reports.
+    -->
+    <script>
+      window.addEventListener('load', function () {
+        // main.js flags the document as booted; if that never happens, the
+        // module failed to load and the page would otherwise sit there dead.
+        setTimeout(function () {
+          if (document.documentElement.dataset.gameBooted) return;
+          var notice = document.getElementById('boot-failure');
+          if (notice) notice.classList.remove('is-hidden');
+        }, 250);
+      });
+    </script>
+    <script>
+(function () {
+"use strict";
+/* ==== js/audio.js ==== */
+/**
+ * All sound is synthesised with the Web Audio API — no audio files to host,
+ * bundle, or license. Every effect is a short oscillator/noise envelope shaped
+ * through a master gain.
+ *
+ * Autoplay policy blocks an AudioContext from starting until the user has
+ * interacted with the page, so the context is created lazily on the first real
+ * gesture and the game ships muted.
+ *
+ * Extension point: a music bed would slot in here as a second scheduled source
+ * driven from the same master gain, gated by its own setting.
+ */
+class AudioKit {
+  constructor() {
+    this.ctx = null;
+    this.master = null;
+    this.enabled = false;
+    this.unlocked = false;
+  }
+
+  /** Creates the context. Must be called from a user gesture handler. */
+  unlock() {
+    if (this.unlocked) {
+      if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+      return;
+    }
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!Ctor) return;
+    try {
+      this.ctx = new Ctor();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = this.enabled ? 0.28 : 0;
+      this.master.connect(this.ctx.destination);
+      this.unlocked = true;
+    } catch {
+      this.ctx = null;
+    }
+    if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+  }
+
+  setEnabled(enabled) {
+    this.enabled = Boolean(enabled);
+    if (this.master) {
+      this.master.gain.setTargetAtTime(this.enabled ? 0.28 : 0, this.ctx.currentTime, 0.02);
+    }
+  }
+
+  /**
+   * Routes a gameplay event to an effect. Unknown events are ignored so new
+   * game events never throw.
+   */
+  handle(event) {
+    if (!this.enabled || !this.ctx) return;
+    switch (event.type) {
+      case 'move':
+        this.#blip({ type: 'square', freq: 210, duration: 0.03, gain: 0.18 });
+        break;
+      case 'rotate':
+        this.#blip({ type: 'triangle', freq: 330, duration: 0.05, gain: 0.2 });
+        break;
+      case 'rotateBlocked':
+        this.#blip({ type: 'square', freq: 110, duration: 0.04, gain: 0.12 });
+        break;
+      case 'lock':
+        this.#thud(0.09);
+        break;
+      case 'hardDrop':
+        this.#hardDrop(event.distance || 1);
+        break;
+      case 'clear':
+        this.#lineClear(event.count || 1);
+        break;
+      case 'levelUp':
+        this.#sweep(320, 900, 0.28, 0.18);
+        break;
+      case 'gameOver':
+        this.#sweep(420, 90, 0.7, 0.22, 'sawtooth');
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** A single shaped oscillator note. */
+  #blip({ type = 'sine', freq, duration = 0.08, gain = 0.2, slideTo = null, delay = 0 }) {
+    const t = this.ctx.currentTime + delay;
+    const osc = this.ctx.createOscillator();
+    const env = this.ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t);
+    if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t + duration);
+    // Fast attack, exponential decay: keeps effects short and percussive.
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(gain, t + 0.008);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+    osc.connect(env).connect(this.master);
+    osc.start(t);
+    osc.stop(t + duration + 0.02);
+  }
+
+  /** A pitched run of notes, used for line clears. */
+  #arpeggio(notes, { step = 0.055, gain = 0.2, type = 'triangle' } = {}) {
+    notes.forEach((freq, i) => {
+      this.#blip({ type, freq, duration: 0.12, gain, delay: i * step });
+    });
+  }
+
+  /** A filtered noise burst — the basis of the thud and hard-drop effects. */
+  #noise(duration, { gain = 0.3, cutoff = 1200, sweepTo = 120, delay = 0 } = {}) {
+    const t = this.ctx.currentTime + delay;
+    const frames = Math.max(1, Math.floor(this.ctx.sampleRate * duration));
+    const buffer = this.ctx.createBuffer(1, frames, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < frames; i++) {
+      // Fade the noise out linearly so the burst has no click at the end.
+      data[i] = (Math.random() * 2 - 1) * (1 - i / frames);
+    }
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(cutoff, t);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(40, sweepTo), t + duration);
+    const env = this.ctx.createGain();
+    env.gain.setValueAtTime(gain, t);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+    src.connect(filter).connect(env).connect(this.master);
+    src.start(t);
+    src.stop(t + duration + 0.02);
+  }
+
+  #thud(gain) {
+    this.#blip({ type: 'sine', freq: 130, duration: 0.09, gain, slideTo: 70 });
+    this.#noise(0.06, { gain: gain * 0.6, cutoff: 900, sweepTo: 200 });
+  }
+
+  #hardDrop(distance) {
+    // Bigger drops land harder, but the effect is compressed so a 20-cell drop
+    // is not deafening.
+    const weight = Math.min(1, 0.4 + distance / 24);
+    this.#noise(0.16, { gain: 0.34 * weight, cutoff: 2600, sweepTo: 90 });
+    this.#blip({ type: 'sine', freq: 260, duration: 0.14, gain: 0.24 * weight, slideTo: 55 });
+  }
+
+  /** Rising pitch and a bigger fanfare the more rows go at once. */
+  #lineClear(count) {
+    const root = 330;
+    const ladder = [0, 4, 7, 12, 16, 19];
+    const notes = ladder.slice(0, count).map((semi) => root * 2 ** (semi / 12));
+    this.#arpeggio(notes, { step: 0.05, gain: 0.18 });
+    this.#noise(0.14, { gain: 0.16, cutoff: 4000, sweepTo: 600 });
+    if (count === 4) {
+      // A tetris gets a bright sustained chord on top of the run.
+      [0, 7, 12].forEach((semi, i) => {
+        this.#blip({
+          type: 'triangle',
+          freq: 660 * 2 ** (semi / 12),
+          duration: 0.3,
+          gain: 0.14,
+          delay: 0.18 + i * 0.03,
+        });
+      });
+    }
+  }
+
+  #sweep(from, to, duration, gain, type = 'sine') {
+    this.#blip({ type, freq: from, duration, gain, slideTo: to });
+  }
+}
+
+/* ==== js/config.js ==== */
+/**
+ * Central tuning values: board geometry, palette, gravity curve, scoring, input
+ * defaults. Everything that a designer might want to tweak lives here so the
+ * gameplay modules stay free of magic numbers.
+ */
+
+/** Visible playfield width. */
+const COLS = 10;
+
+/** Visible playfield height. */
+const ROWS = 20;
+
+/**
+ * Rows stored *above* the visible field. Pieces spawn in here, so a stack that
+ * reaches the ceiling has somewhere to live before the game ends.
+ */
+const BUFFER_ROWS = 2;
+
+/** Total rows in the backing matrix. */
+const TOTAL_ROWS = ROWS + BUFFER_ROWS;
+
+/** First matrix row that is actually drawn. */
+const VISIBLE_START = BUFFER_ROWS;
+
+/** Neon palette. Index 0 is "empty" and is never drawn as a piece. */
+const COLORS = {
+  I: '#22d3ee',
+  O: '#facc15',
+  T: '#a855f7',
+  S: '#22c55e',
+  Z: '#f43f5e',
+  J: '#3b82f6',
+  L: '#fb923c',
+};
+
+/** Background tints for the playfield. */
+const THEME = {
+  void: '#05070e',
+  grid: 'rgba(148, 197, 255, 0.07)',
+  gridStrong: 'rgba(148, 197, 255, 0.14)',
+  wall: 'rgba(148, 197, 255, 0.22)',
+  ghost: 'rgba(226, 240, 255, 0.14)',
+  flash: '#ffffff',
+};
+
+/** Fastest legal descent: one row per animation frame. */
+const MIN_GRAVITY_MS = 1000 / 60;
+
+/**
+ * Guideline gravity curve, returning the milliseconds between natural downward
+ * steps at a given level.
+ *
+ * The guideline formula is `Time = (0.8 - (level - 1) * 0.007) ^ (level - 1)`
+ * seconds, which runs from 1s per row at level 1 down to under a millisecond by
+ * level 20. Past level 13 the curve is faster than the display can show, so it
+ * is floored at one row per frame — the same ceiling real implementations hit.
+ */
+function gravityMs(level) {
+  const l = Math.max(1, level);
+  const seconds = Math.pow(0.8 - (l - 1) * 0.007, l - 1);
+  return Math.max(seconds * 1000, MIN_GRAVITY_MS);
+}
+
+/** Lines needed to advance one level. */
+const LINES_PER_LEVEL = 10;
+
+/** Base score by number of lines cleared, multiplied by level. */
+const LINE_SCORES = { 1: 100, 2: 300, 3: 500, 4: 800 };
+
+/** Perfect-clear bonus by lines cleared, multiplied by level. */
+const PERFECT_CLEAR_SCORES = { 1: 800, 2: 1200, 3: 1800, 4: 2000 };
+
+/** Points per cell dropped. */
+const SOFT_DROP_POINTS = 1;
+const HARD_DROP_POINTS = 2;
+
+/** Combo bonus is `COMBO_POINTS * comboCount * level`. */
+const COMBO_POINTS = 50;
+
+/** Consecutive tetrises multiply the line-clear score. */
+const BACK_TO_BACK_MULTIPLIER = 1.5;
+
+/** Grace period on landing before the piece locks, in ms. */
+const LOCK_DELAY_MS = 500;
+
+/** How many times the lock delay may be refreshed by moving/rotating. */
+const MAX_LOCK_RESETS = 15;
+
+/** Soft drop repeats this fast while the down key is held. */
+const SOFT_DROP_INTERVAL_MS = 25;
+
+/** Total length of the line-clear flash + collapse animation. */
+const CLEAR_ANIMATION_MS = 260;
+
+const DEFAULT_SETTINGS = {
+  sound: false,
+  ghost: true,
+  grid: true,
+  das: 150,
+  arr: 33,
+  keybindings: {
+    left: 'ArrowLeft',
+    right: 'ArrowRight',
+    softDrop: 'ArrowDown',
+    rotateCW: 'ArrowUp',
+    rotateCCW: 'KeyZ',
+    rotate180: 'KeyA',
+    hardDrop: 'Space',
+    pause: 'KeyP',
+  },
+};
+
+/** Human-readable labels for the rebindable actions. */
+const ACTION_LABELS = {
+  left: 'Move left',
+  right: 'Move right',
+  softDrop: 'Soft drop',
+  rotateCW: 'Rotate CW',
+  rotateCCW: 'Rotate CCW',
+  rotate180: 'Rotate 180',
+  hardDrop: 'Hard drop',
+  pause: 'Pause',
+};
+
+/* ==== js/pieces.js ==== */
+/**
+ * Tetromino definitions and the Super Rotation System (SRS) kick tables.
+ *
+ * Rotation states are stored as cell offsets inside the piece's bounding box,
+ * with state 0 = spawn, 1 = right (CW), 2 = 180, 3 = left (CCW). Storing real
+ * coordinates per state — rather than rotating matrices at runtime — keeps the
+ * rotation path cheap and makes each state directly inspectable.
+ *
+ * The spawn offset places the piece so it matches guideline behaviour: the main
+ * body of a piece appears on the first visible row, with its "nose" in the
+ * buffer above.
+ */
+
+const SHAPES = {
+  I: {
+    size: 4,
+    spawnX: 3,
+    spawnY: 1,
+    states: [
+      [[0, 1], [1, 1], [2, 1], [3, 1]],
+      [[2, 0], [2, 1], [2, 2], [2, 3]],
+      [[0, 2], [1, 2], [2, 2], [3, 2]],
+      [[1, 0], [1, 1], [1, 2], [1, 3]],
+    ],
+  },
+  O: {
+    size: 2,
+    spawnX: 4,
+    spawnY: 2,
+    // The O piece is rotationally symmetric: it has four nominal states that
+    // are geometrically identical, and it never uses kick offsets.
+    states: [
+      [[0, 0], [1, 0], [0, 1], [1, 1]],
+      [[0, 0], [1, 0], [0, 1], [1, 1]],
+      [[0, 0], [1, 0], [0, 1], [1, 1]],
+      [[0, 0], [1, 0], [0, 1], [1, 1]],
+    ],
+  },
+  T: {
+    size: 3,
+    spawnX: 3,
+    spawnY: 1,
+    states: [
+      [[1, 0], [0, 1], [1, 1], [2, 1]],
+      [[1, 0], [1, 1], [2, 1], [1, 2]],
+      [[0, 1], [1, 1], [2, 1], [1, 2]],
+      [[1, 0], [0, 1], [1, 1], [1, 2]],
+    ],
+  },
+  S: {
+    size: 3,
+    spawnX: 3,
+    spawnY: 1,
+    states: [
+      [[1, 0], [2, 0], [0, 1], [1, 1]],
+      [[1, 0], [1, 1], [2, 1], [2, 2]],
+      [[1, 1], [2, 1], [0, 2], [1, 2]],
+      [[0, 0], [0, 1], [1, 1], [1, 2]],
+    ],
+  },
+  Z: {
+    size: 3,
+    spawnX: 3,
+    spawnY: 1,
+    states: [
+      [[0, 0], [1, 0], [1, 1], [2, 1]],
+      [[2, 0], [1, 1], [2, 1], [1, 2]],
+      [[0, 1], [1, 1], [1, 2], [2, 2]],
+      [[1, 0], [0, 1], [1, 1], [0, 2]],
+    ],
+  },
+  J: {
+    size: 3,
+    spawnX: 3,
+    spawnY: 1,
+    states: [
+      [[0, 0], [0, 1], [1, 1], [2, 1]],
+      [[1, 0], [2, 0], [1, 1], [1, 2]],
+      [[0, 1], [1, 1], [2, 1], [2, 2]],
+      [[1, 0], [1, 1], [0, 2], [1, 2]],
+    ],
+  },
+  L: {
+    size: 3,
+    spawnX: 3,
+    spawnY: 1,
+    states: [
+      [[2, 0], [0, 1], [1, 1], [2, 1]],
+      [[1, 0], [1, 1], [1, 2], [2, 2]],
+      [[0, 1], [1, 1], [2, 1], [0, 2]],
+      [[0, 0], [1, 0], [1, 1], [1, 2]],
+    ],
+  },
+};
+
+/** Order used by the 7-bag randomiser. */
+const TYPES = Object.keys(SHAPES);
+
+/**
+ * SRS wall-kick offsets, published with +Y pointing *up*. Our board's Y points
+ * *down*, so `rotate()` negates the dy component when it applies these.
+ *
+ * Each entry is keyed by "from>to" and holds up to 5 candidate offsets that are
+ * tried in order until one lands the piece without a collision. The first
+ * offset is always (0, 0), so a rotation with room to turn never shifts.
+ */
+const KICKS_JLSTZ = {
+  '0>1': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+  '1>0': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+  '1>2': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+  '2>1': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+  '2>3': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+  '3>2': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+  '3>0': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+  '0>3': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+};
+
+/** The I piece uses its own kick table because it is flush with the walls. */
+const KICKS_I = {
+  '0>1': [[0, 0], [-2, 0], [1, 0], [-2, -1], [1, 2]],
+  '1>0': [[0, 0], [2, 0], [-1, 0], [2, 1], [-1, -2]],
+  '1>2': [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1]],
+  '2>1': [[0, 0], [1, 0], [-2, 0], [1, -2], [-2, 1]],
+  '2>3': [[0, 0], [2, 0], [-1, 0], [2, 1], [-1, -2]],
+  '3>2': [[0, 0], [-2, 0], [1, 0], [-2, -1], [1, 2]],
+  '3>0': [[0, 0], [1, 0], [-2, 0], [1, -2], [-2, 1]],
+  '0>3': [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1]],
+};
+
+/**
+ * Offsets for the optional 180 rotation. The published SRS tables only cover
+ * quarter turns, so 0<->2 and 1<->3 use this community-standard extension: try
+ * a small vertical lift and horizontal nudges. Same +Y up convention as above.
+ */
+const KICKS_180 = {
+  '0>2': [[0, 0], [0, 1], [1, 1], [-1, 1], [1, 0], [-1, 0]],
+  '2>0': [[0, 0], [0, -1], [-1, -1], [1, -1], [-1, 0], [1, 0]],
+  '1>3': [[0, 0], [0, 1], [1, 1], [-1, 1], [1, 0], [-1, 0]],
+  '3>1': [[0, 0], [0, -1], [-1, -1], [1, -1], [-1, 0], [1, 0]],
+};
+
+/**
+ * Returns the kick candidates for a rotation, or `null` when the rotation needs
+ * none (the O piece, or a no-op).
+ */
+function kicksFor(type, from, to) {
+  if (from === to) return null;
+  const delta = (((to - from) % 4) + 4) % 4;
+  if (delta === 2) return KICKS_180[`${from}>${to}`] || null;
+  if (type === 'O') return null;
+  const table = type === 'I' ? KICKS_I : KICKS_JLSTZ;
+  return table[`${from}>${to}`] || null;
+}
+
+/** Absolute cells of a piece: bounding-box offsets plus its board position. */
+function cellsOf(piece) {
+  const shape = SHAPES[piece.type];
+  return shape.states[piece.rotation].map(([cx, cy]) => [piece.x + cx, piece.y + cy]);
+}
+
+/* ==== js/board.js ==== */
+/**
+ * The playfield matrix and everything that needs to know about occupancy.
+ *
+ * Cells live in a flat Uint8Array of `COLS * TOTAL_ROWS`. The value 0 means
+ * empty; anything else is a 1-based index into PIECE_KEYS so the renderer can
+ * look up a colour without a second lookup table.
+ */
+class Board {
+  constructor() {
+    this.cols = COLS;
+    this.rows = TOTAL_ROWS;
+    this.cells = new Uint8Array(COLS * TOTAL_ROWS);
+  }
+
+  /** Empties the whole matrix, including the spawn buffer. */
+  clear() {
+    this.cells.fill(0);
+  }
+
+  /** Writes a cell, ignoring out-of-bounds writes. */
+  set(x, y, value) {
+    if (x < 0 || x >= this.cols || y < 0 || y >= this.rows) return;
+    this.cells[y * this.cols + x] = value;
+  }
+
+  /**
+   * True when the piece would overlap a wall, the floor, or a locked cell.
+   * Cells above the ceiling are allowed through — that is the spawn buffer, and
+   * a piece may legitimately live there.
+   */
+  collides(piece) {
+    for (const [x, y] of cellsOf(piece)) {
+      if (x < 0 || x >= this.cols || y >= this.rows) return true;
+      if (y >= 0 && this.cells[y * this.cols + x] !== 0) return true;
+    }
+    return false;
+  }
+
+  /** Writes the piece's cells into the matrix. */
+  lock(piece, value) {
+    for (const [x, y] of cellsOf(piece)) this.set(x, y, value);
+  }
+
+  /** True when the piece has nowhere left to go downward. */
+  isGrounded(piece) {
+    return this.collides({ ...piece, y: piece.y + 1 });
+  }
+
+  /** Row indices that are completely filled, in ascending order. */
+  fullRows() {
+    const rows = [];
+    for (let y = 0; y < this.rows; y++) {
+      let filled = true;
+      for (let x = 0; x < this.cols; x++) {
+        if (this.cells[y * this.cols + x] === 0) {
+          filled = false;
+          break;
+        }
+      }
+      if (filled) rows.push(y);
+    }
+    return rows;
+  }
+
+  /**
+   * Removes the given rows and drops everything above them down, preserving
+   * column order. Returns the number of rows removed.
+   */
+  clearRows(rows) {
+    if (rows.length === 0) return 0;
+    const doomed = new Set(rows);
+    // Survivors are packed to the bottom of a fresh matrix, whose top stays
+    // zeroed, so the gap each removed row leaves is filled with empty space.
+    const next = new Uint8Array(this.cols * this.rows);
+    let write = rows.length * this.cols;
+    for (let y = 0; y < this.rows; y++) {
+      if (doomed.has(y)) continue;
+      next.set(this.cells.subarray(y * this.cols, (y + 1) * this.cols), write);
+      write += this.cols;
+    }
+    this.cells.set(next);
+    return rows.length;
+  }
+
+  /** True when no cell is filled — used for the perfect-clear bonus. */
+  isEmpty() {
+    for (let i = 0; i < this.cells.length; i++) {
+      if (this.cells[i] !== 0) return false;
+    }
+    return true;
+  }
+
+  /**
+   * True when every cell of the piece sits inside the spawn buffer, which is
+   * the "lock out" game-over condition.
+   */
+  isEntirelyAboveField(piece) {
+    return cellsOf(piece).every(([, y]) => y < VISIBLE_START);
+  }
+}
+
+/* ==== js/game.js ==== */
+/** Cell values are 1-based so 0 can mean "empty". */
+const CELL_VALUE = { I: 1, O: 2, T: 3, S: 4, Z: 5, J: 6, L: 7 };
+
+/** Upper bound on gravity steps per frame, so a long stall cannot flood. */
+const MAX_GRAVITY_CATCHUP = 20;
+
+/** Reverse lookup so the renderer can colour a cell value. */
+const CELL_COLORS = [null, ...Object.values(COLORS)];
+
+/** Pieces are dealt in bags of seven so droughts are bounded. */
+class SevenBag {
+  constructor() {
+    this.queue = [];
+  }
+
+  /** Peeks the nth upcoming piece without consuming anything. */
+  peek(n) {
+    while (this.queue.length <= n) this.#refill();
+    return this.queue[n];
+  }
+
+  shift() {
+    this.peek(0);
+    return this.queue.shift();
+  }
+
+  #refill() {
+    const bag = [...TYPES];
+    // Fisher-Yates. Math.random is plenty here: piece order is a gameplay
+    // convenience, not a security concern.
+    for (let i = bag.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [bag[i], bag[j]] = [bag[j], bag[i]];
+    }
+    this.queue.push(...bag);
+  }
+}
+
+class Game {
+  /**
+   * @param {(event: {type: string, [key: string]: unknown}) => void} onEvent
+   *   Sink for audio and presentation events. The game itself never touches
+   *   the DOM, which keeps it trivially testable.
+   */
+  constructor(onEvent = () => {}) {
+    this.onEvent = onEvent;
+    this.board = new Board();
+    this.bag = new SevenBag();
+    this.settings = { ghost: true };
+    this.reset();
+    this.state = 'ready';
+  }
+
+  reset() {
+    this.active = null;
+    this.softDropping = false;
+    this.gravityAcc = 0;
+    this.lockTimer = 0;
+    this.lockResets = 0;
+    this.clearTimer = 0;
+    this.pendingRows = [];
+    this.score = 0;
+    this.lines = 0;
+    this.level = 1;
+    this.combo = -1;
+    this.backToBack = false;
+    this.playedMs = 0;
+    this.stats = { singles: 0, doubles: 0, triples: 0, tetrises: 0, pieces: 0 };
+  }
+
+  /** Applies persisted settings that affect gameplay or presentation. */
+  applySettings(settings) {
+    this.settings = {
+      ghost: settings.ghost !== false,
+      grid: settings.grid !== false,
+    };
+  }
+
+  /** Milliseconds between downward steps, honouring soft drop. */
+  gravityInterval() {
+    const natural = gravityMs(this.level);
+    return this.softDropping ? Math.min(natural, SOFT_DROP_INTERVAL_MS) : natural;
+  }
+
+  newGame() {
+    this.board.clear();
+    this.bag = new SevenBag();
+    this.reset();
+    this.state = 'playing';
+    this.#spawn();
+  }
+
+  /** Returns to the idle menu state without clearing the board. */
+  toMenu() {
+    this.state = 'ready';
+    this.active = null;
+    this.softDropping = false;
+  }
+
+  /**
+   * Fills the lower half of the board with a plausible-looking stack so the
+   * menu screen is not sitting in front of an empty grid. Purely cosmetic.
+   */
+  seedAttract() {
+    this.board.clear();
+    const { cols, rows } = this.board;
+    for (let y = Math.floor(rows / 2); y < rows; y++) {
+      // Ragged skyline, thickening toward the floor.
+      const chance = 0.35 + 0.5 * ((y - rows / 2) / (rows / 2));
+      for (let x = 0; x < cols; x++) {
+        if (Math.random() < chance) this.board.set(x, y, 1 + Math.floor(Math.random() * 7));
+      }
+    }
+    // Punch a few holes so it reads as a game in progress, not a solid mass.
+    for (let i = 0; i < 8; i++) {
+      this.board.set(
+        Math.floor(Math.random() * cols),
+        Math.floor(rows / 2) + Math.floor(Math.random() * (rows / 2)),
+        0,
+      );
+    }
+  }
+
+  pause() {
+    if (this.state !== 'playing') return;
+    this.state = 'paused';
+    this.softDropping = false;
+    this.onEvent({ type: 'pause' });
+  }
+
+  resume() {
+    if (this.state !== 'paused') return;
+    this.state = 'playing';
+    // Drop the accumulated wall-clock time so the piece does not lurch.
+    this.gravityAcc = 0;
+    this.onEvent({ type: 'resume' });
+  }
+
+  togglePause() {
+    if (this.state === 'playing') this.pause();
+    else if (this.state === 'paused') this.resume();
+  }
+
+  // ---------------------------------------------------------------- input ---
+
+  /** Holding down enables fast repeated descent until released. */
+  setSoftDrop(active) {
+    this.softDropping = active && this.canAct();
+  }
+
+  move(dx) {
+    if (!this.canAct()) return false;
+    const moved = { ...this.active, x: this.active.x + dx };
+    if (this.board.collides(moved)) return false;
+    this.active = moved;
+    this.#onPieceMoved();
+    this.onEvent({ type: 'move' });
+    return true;
+  }
+
+  /**
+   * Rotates the active piece one step in `direction` (+1 clockwise, -1
+   * counter-clockwise, 2 for 180), trying each SRS kick in order until the
+   * piece lands somewhere legal. Returns true when the rotation succeeded.
+   */
+  rotate(direction) {
+    if (!this.canAct()) return false;
+    const from = this.active.rotation;
+    const to = (((from + direction) % 4) + 4) % 4;
+    if (to === from) return false;
+
+    // A 180 turn is expressed as two quarter steps so the kick table can map
+    // it, but it is applied in one move.
+    const candidates = kicksFor(this.active.type, from, to) || [[0, 0]];
+    for (const [dx, dy] of candidates) {
+      // Kick tables are published with +Y up; this board's Y axis points down.
+      const candidate = {
+        ...this.active,
+        x: this.active.x + dx,
+        y: this.active.y - dy,
+        rotation: to,
+      };
+      if (!this.board.collides(candidate)) {
+        this.active = candidate;
+        this.#onPieceMoved();
+        this.onEvent({ type: 'rotate' });
+        return true;
+      }
+    }
+    this.onEvent({ type: 'rotateBlocked' });
+    return false;
+  }
+
+  /** Drops straight to the resting row and scores the distance. */
+  hardDrop() {
+    if (!this.canAct()) return false;
+    let distance = 0;
+    while (!this.board.collides({ ...this.active, y: this.active.y + 1 })) {
+      this.active = { ...this.active, y: this.active.y + 1 };
+      distance++;
+    }
+    this.score += distance * HARD_DROP_POINTS;
+    this.onEvent({
+      type: 'hardDrop',
+      distance,
+      cells: cellsOf(this.active),
+      pieceType: this.active.type,
+    });
+    this.lockPiece();
+    return true;
+  }
+
+  // ----------------------------------------------------------------- loop ---
+
+  /**
+   * Advances the game by `dt` milliseconds.
+   *
+   * Gravity runs on an accumulator rather than its own timer, so the descent
+   * speed is independent of frame rate and leftover time carries between
+   * frames instead of being thrown away.
+   */
+  update(dt) {
+    if (this.state !== 'playing') return;
+    this.playedMs += dt;
+
+    if (this.isClearing()) {
+      this.clearTimer -= dt;
+      if (this.clearTimer <= 0) this.#finishLineClear();
+      return;
+    }
+    if (!this.active) return;
+
+    const interval = this.gravityInterval();
+    this.gravityAcc += dt;
+    let steps = 0;
+    while (this.gravityAcc >= interval && steps < MAX_GRAVITY_CATCHUP) {
+      this.gravityAcc -= interval;
+      steps++;
+      if (!this.#gravityStep()) break;
+    }
+    // If we exhausted the catch-up budget the tab was likely backgrounded;
+    // discard the backlog instead of fast-forwarding the whole board.
+    if (steps >= MAX_GRAVITY_CATCHUP) this.gravityAcc = 0;
+
+    if (this.board.isGrounded(this.active)) {
+      this.lockTimer += dt;
+      // The lock delay gives the player a moment to slide or rotate a piece
+      // into a better slot once it has landed.
+      if (this.lockTimer >= LOCK_DELAY_MS) this.lockPiece();
+    } else {
+      this.lockTimer = 0;
+      this.lockResets = 0;
+    }
+  }
+
+  // -------------------------------------------------------------- helpers ---
+
+  isClearing() {
+    return this.pendingRows.length > 0;
+  }
+
+  canAct() {
+    return this.state === 'playing' && this.active !== null && !this.isClearing();
+  }
+
+  /** Board Y where the active piece would come to rest. */
+  ghostY() {
+    if (!this.active) return 0;
+    let y = this.active.y;
+    while (!this.board.collides({ ...this.active, y: y + 1 })) y++;
+    return y;
+  }
+
+  /** Cells of the active piece, for rendering. */
+  activeCells() {
+    return this.active ? cellsOf(this.active) : [];
+  }
+
+  /**
+   * Moving or rotating refreshes the lock delay so the player can keep
+   * adjusting, but the budget is finite so a piece can never be held forever.
+   */
+  #onPieceMoved() {
+    this.gravityAcc = 0;
+    if (this.lockResets < MAX_LOCK_RESETS) {
+      this.lockTimer = 0;
+      this.lockResets++;
+    }
+  }
+
+  #gravityStep() {
+    if (this.board.collides({ ...this.active, y: this.active.y + 1 })) {
+      this.softDropping = false;
+      return false;
+    }
+    this.active = { ...this.active, y: this.active.y + 1 };
+    if (this.softDropping) this.score += SOFT_DROP_POINTS;
+    return true;
+  }
+
+  #placeAt(type) {
+    const shape = SHAPES[type];
+    return { type, rotation: 0, x: shape.spawnX, y: shape.spawnY };
+  }
+
+  /**
+   * Deals the next piece. Returns false when it has nowhere to go, which is
+   * the "block out" game-over condition.
+   */
+  #spawn() {
+    const piece = this.#placeAt(this.bag.shift());
+    this.active = piece;
+    this.gravityAcc = 0;
+    this.lockTimer = 0;
+    this.lockResets = 0;
+    this.stats.pieces++;
+    if (this.board.collides(piece)) {
+      this.#endGame('blockOut');
+      return false;
+    }
+    return true;
+  }
+
+  lockPiece() {
+    if (!this.active || this.isClearing()) return;
+    const piece = this.active;
+    this.board.lock(piece, CELL_VALUE[piece.type]);
+    this.onEvent({
+      type: 'lock',
+      cells: cellsOf(piece),
+      pieceType: piece.type,
+    });
+
+    // Lock out: the piece came to rest entirely inside the spawn buffer.
+    if (this.board.isEntirelyAboveField(piece)) {
+      this.#endGame('lockOut');
+      return;
+    }
+
+    this.active = null;
+    this.softDropping = false;
+
+    const rows = this.board.fullRows();
+    if (rows.length > 0) {
+      this.pendingRows = rows;
+      this.clearTimer = CLEAR_ANIMATION_MS;
+      this.onEvent({ type: 'clearStart', rows, count: rows.length });
+    } else {
+      // A lock with no clear ends any combo streak.
+      this.combo = -1;
+      this.onEvent({ type: 'combo', value: 0 });
+      this.#spawn();
+    }
+  }
+
+  /**
+   * Applies the pending clear, awards score, then deals the next piece. The
+   * board has already been shown mid-animation by this point, so the mutation
+   * lines up with what the player watched.
+   */
+  #finishLineClear() {
+    const rows = this.pendingRows;
+    const count = rows.length;
+    this.pendingRows = [];
+    this.clearTimer = 0;
+
+    this.board.clearRows(rows);
+    this.lines += count;
+    this.combo++;
+
+    const previousLevel = this.level;
+    this.level = Math.floor(this.lines / LINES_PER_LEVEL) + 1;
+
+    // A "difficult" clear in single-player Tetris is a tetris and nothing else,
+    // so the bonus needs a tetris on both sides: the streak is armed only by a
+    // tetris, and a clear of any other size ends it.
+    const backToBack = this.backToBack && count === 4;
+    this.backToBack = count === 4;
+
+    let gained = (LINE_SCORES[count] || 0) * this.level;
+    if (backToBack) gained = Math.floor(gained * BACK_TO_BACK_MULTIPLIER);
+    // The first clear of a chain has combo 0 and scores nothing extra.
+    if (this.combo > 0) gained += COMBO_POINTS * this.combo * this.level;
+
+    if (this.board.isEmpty()) {
+      gained += (PERFECT_CLEAR_SCORES[count] || 0) * this.level;
+    }
+    const perfectClear = this.board.isEmpty();
+
+    this.score += gained;
+    this.#recordClearStat(count);
+    this.onEvent({ type: 'combo', value: Math.max(0, this.combo) });
+
+    this.onEvent({
+      type: 'clear',
+      count,
+      gained,
+      combo: Math.max(0, this.combo),
+      backToBack,
+      perfectClear,
+      rows,
+    });
+
+    if (this.level > previousLevel) {
+      this.onEvent({ type: 'levelUp', level: this.level });
+    }
+
+    this.#spawn();
+  }
+
+  #recordClearStat(count) {
+    if (count === 1) this.stats.singles++;
+    else if (count === 2) this.stats.doubles++;
+    else if (count === 3) this.stats.triples++;
+    else if (count === 4) this.stats.tetrises++;
+  }
+
+  #endGame(reason) {
+    this.state = 'gameover';
+    this.active = null;
+    this.softDropping = false;
+    this.onEvent({ type: 'gameOver', reason, summary: this.summary() });
+  }
+
+  /** Snapshot for the game-over screen. */
+  summary() {
+    return {
+      score: this.score,
+      lines: this.lines,
+      level: this.level,
+      pieces: this.stats.pieces,
+      singles: this.stats.singles,
+      doubles: this.stats.doubles,
+      triples: this.stats.triples,
+      tetrises: this.stats.tetrises,
+      durationMs: Math.round(this.playedMs),
+    };
+  }
+}
+
+/* ==== js/input.js ==== */
+/**
+ * Keyboard and touch input, including delayed auto-shift (DAS) and auto-repeat
+ * (ARR) so holding a direction slides the piece at a controlled rate.
+ *
+ * Every listener is registered through one AbortController. Calling `detach()`
+ * aborts all of them at once, which is what makes teardown leak-free.
+ */
+
+const ARROWS = {
+  ArrowLeft: '←',
+  ArrowRight: '→',
+  ArrowUp: '↑',
+  ArrowDown: '↓',
+};
+
+/** Reads a KeyboardEvent.code into something a person can read. */
+function prettyKey(code) {
+  if (!code) return '—';
+  if (ARROWS[code]) return ARROWS[code];
+  if (code.startsWith('Key')) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  const named = {
+    Space: 'Space',
+    ShiftLeft: 'L Shift',
+    ShiftRight: 'R Shift',
+    ControlLeft: 'L Ctrl',
+    ControlRight: 'R Ctrl',
+    Escape: 'Esc',
+    Enter: 'Enter',
+    Backspace: 'Bksp',
+  };
+  return named[code] || code;
+}
+
+class Input {
+  /**
+   * @param {object} options
+   * @param {import('./game.js').Game} options.game
+   * @param {() => object} options.getSettings Re-read on every call so rebinding
+   *   and DAS/ARR edits take effect immediately.
+   * @param {() => void} options.onPauseToggle
+   * @param {() => void} options.onGesture Called on any real user gesture, used
+   *   to unlock the audio context.
+   */
+  constructor({ game, getSettings, onPauseToggle, onGesture }) {
+    this.game = game;
+    this.getSettings = getSettings;
+    this.onPauseToggle = onPauseToggle;
+    this.onGesture = onGesture;
+    this.controller = new AbortController();
+    this.held = new Set();
+    this.shiftDir = 0;
+    this.dasTimer = 0;
+    this.arrTimer = 0;
+    this.bound = false;
+  }
+
+  /** Builds a code -> action lookup from the current bindings. */
+  #actionFor(code) {
+    const { keybindings } = this.getSettings();
+    for (const [action, bound] of Object.entries(keybindings)) {
+      if (bound === code) return action;
+    }
+    return null;
+  }
+
+  attach() {
+    if (this.bound) return;
+    this.bound = true;
+    const { signal } = this.controller;
+
+    window.addEventListener(
+      'keydown',
+      (event) => {
+        this.onGesture();
+        // Let the browser keep its own shortcuts when a modifier is held.
+        if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+        const action = this.#actionFor(event.code);
+        if (!action) return;
+        // Arrows and space scroll the page otherwise.
+        event.preventDefault();
+        if (event.repeat) return;
+        if (action === 'pause') {
+          this.onPauseToggle();
+          return;
+        }
+        this.press(action);
+      },
+      { signal },
+    );
+
+    window.addEventListener(
+      'keyup',
+      (event) => {
+        const action = this.#actionFor(event.code);
+        if (action) this.release(action);
+      },
+      { signal },
+    );
+
+    // Releasing focus with a key down would otherwise leave the piece sliding.
+    window.addEventListener('blur', () => this.releaseAll(), { signal });
+  }
+
+  /** Wires the on-screen touch pad. Safe to call before the DOM is ready. */
+  attachTouchPad(root) {
+    if (!root) return;
+    const { signal } = this.controller;
+    for (const button of root.querySelectorAll('[data-action]')) {
+      const action = button.dataset.action;
+      button.addEventListener(
+        'pointerdown',
+        (event) => {
+          event.preventDefault();
+          this.onGesture();
+          button.setPointerCapture?.(event.pointerId);
+          button.classList.add('is-pressed');
+          this.press(action);
+        },
+        { signal },
+      );
+      const end = (event) => {
+        event.preventDefault();
+        button.classList.remove('is-pressed');
+        this.release(action);
+      };
+      button.addEventListener('pointerup', end, { signal });
+      button.addEventListener('pointercancel', end, { signal });
+      button.addEventListener('lostpointercapture', () => {
+        button.classList.remove('is-pressed');
+        this.release(action);
+      }, { signal });
+      // A pointer that leaves the button must not leave the piece stuck.
+      button.addEventListener('contextmenu', (event) => event.preventDefault(), { signal });
+    }
+  }
+
+  detach() {
+    this.controller.abort();
+    this.bound = false;
+    this.releaseAll();
+  }
+
+  press(action) {
+    if (this.held.has(action)) return;
+    this.held.add(action);
+    if (action === 'left' || action === 'right') {
+      // When both directions are held the most recent press wins.
+      this.shiftDir = action === 'left' ? -1 : 1;
+      this.dasTimer = 0;
+      this.arrTimer = 0;
+      this.game.move(this.shiftDir);
+    } else if (action === 'softDrop') {
+      this.game.setSoftDrop(true);
+    } else if (action === 'rotateCW') {
+      this.game.rotate(1);
+    } else if (action === 'rotateCCW') {
+      this.game.rotate(-1);
+    } else if (action === 'rotate180') {
+      this.game.rotate(2);
+    } else if (action === 'hardDrop') {
+      this.game.hardDrop();
+    }
+  }
+
+  release(action) {
+    if (!this.held.delete(action)) return;
+    if (action === 'left' || action === 'right') {
+      const other = action === 'left' ? 'right' : 'left';
+      // Falling back to the still-held key avoids a dead gap in the slide.
+      this.shiftDir = this.held.has(other) ? (other === 'left' ? -1 : 1) : 0;
+      this.dasTimer = 0;
+      this.arrTimer = 0;
+    } else if (action === 'softDrop') {
+      this.game.setSoftDrop(false);
+    }
+  }
+
+  releaseAll() {
+    for (const action of [...this.held]) this.release(action);
+    this.held.clear();
+    this.shiftDir = 0;
+  }
+
+  /** Drives DAS/ARR. Called once per frame from the main loop. */
+  update(dt) {
+    if (this.shiftDir === 0) return;
+    const { das, arr } = this.getSettings();
+    const delay = Math.max(0, das);
+    this.dasTimer += dt;
+    if (this.dasTimer < delay) return;
+
+    // A zero ARR would spin forever; floor it at one frame.
+    const interval = Math.max(1, arr);
+    this.arrTimer += dt;
+    let steps = 0;
+    while (this.arrTimer >= interval && steps < 20) {
+      this.arrTimer -= interval;
+      steps++;
+      if (!this.game.move(this.shiftDir)) break;
+    }
+    if (steps >= 20) this.arrTimer = 0;
+  }
+}
+
+/* ==== js/renderer.js ==== */
+/** Fraction of the clear animation spent on the white flash. */
+const FLASH_SHARE = 0.55;
+
+/** Colour of a piece type, from the shared cell-value map. */
+const colorOf = (type) => CELL_COLORS[CELL_VALUE[type]];
+
+/** Traces a rounded rectangle. Hand-rolled for browsers without roundRect. */
+function roundedRect(ctx, x, y, w, h, r) {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+}
+
+/** Shortest spin-up path so a fixed frame budget always looks the same. */
+function easeOutCubic(t) {
+  return 1 - (1 - t) ** 3;
+}
+
+class Renderer {
+  constructor(canvas, { reducedMotion = false } = {}) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d', { alpha: false });
+    this.cell = 0;
+    this.dpr = 1;
+    this.width = 0;
+    this.height = 0;
+    this.offsetX = 0;
+    this.offsetY = 0;
+    this.particles = [];
+    this.shake = 0;
+    this.time = 0;
+    this.reducedMotion = reducedMotion;
+    this.game = null;
+    this.collapse = 0;
+    this.flash = false;
+  }
+
+  /**
+   * Matches the backing store to the element's CSS box and the device pixel
+   * ratio, so the field stays sharp on high-density displays and after a resize
+   * or zoom change.
+   *
+   * The cell size is taken from whichever dimension is tighter and the field is
+   * centred, so a distorted box letterboxes instead of drawing off the canvas.
+   */
+  resize() {
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const width = Math.round(rect.width * this.dpr);
+    const height = Math.round(rect.height * this.dpr);
+    if (this.canvas.width !== width || this.canvas.height !== height) {
+      this.canvas.width = width;
+      this.canvas.height = height;
+    }
+    this.width = rect.width;
+    this.height = rect.height;
+    this.cell = Math.min(rect.width / COLS, rect.height / ROWS);
+    this.offsetX = (rect.width - COLS * this.cell) / 2;
+    this.offsetY = (rect.height - ROWS * this.cell) / 2;
+  }
+
+  /** Converts a matrix row to its drawn row, honouring the clear animation. */
+  #visualRow(row) {
+    if (this.collapse === 0) return row - VISIBLE_START;
+    let clearedBelow = 0;
+    for (const cleared of this.game.pendingRows) {
+      if (cleared > row) clearedBelow++;
+    }
+    // Rows above a cleared row slide down to close the gap, ending exactly
+    // where the real mutation will place them.
+    return row - VISIBLE_START + clearedBelow * this.collapse;
+  }
+
+  /** A filled block with a beveled, faintly lit face. */
+  #drawBlock(col, row, color, { alpha = 1, glow = 0, inset = 0.06 } = {}) {
+    const size = this.cell;
+    const x = this.offsetX + col * size;
+    const y = this.offsetY + row * size;
+    const pad = size * inset;
+    const ctx = this.ctx;
+    const w = size - pad * 2;
+    const h = size - pad * 2;
+
+    ctx.globalAlpha = alpha;
+    if (glow > 0) {
+      ctx.shadowColor = color;
+      ctx.shadowBlur = glow;
+    }
+    ctx.fillStyle = color;
+    roundedRect(ctx, x + pad, y + pad, w, h, size * 0.16);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Cheap bevel: a light inner edge top-left, a dark one bottom-right. This
+    // gives the blocks depth without a per-cell shadow blur.
+    const lip = Math.max(1, size * 0.09);
+    ctx.globalAlpha = alpha * 0.5;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+    ctx.fillRect(x + pad + lip, y + pad + lip, w - lip * 2, lip);
+    ctx.fillRect(x + pad + lip, y + pad + lip, lip, h - lip * 2);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.32)';
+    ctx.fillRect(x + pad + lip, y + pad + h - lip * 2, w - lip * 2, lip);
+    ctx.fillRect(x + pad + w - lip * 2, y + pad + lip, lip, h - lip * 2);
+    ctx.globalAlpha = 1;
+  }
+
+  /** A hollow outline marking where the piece will land. */
+  #drawGhost(col, row) {
+    const size = this.cell;
+    const pad = size * 0.08;
+    const x = this.offsetX + col * size;
+    const y = this.offsetY + row * size;
+    const ctx = this.ctx;
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = THEME.ghost;
+    roundedRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, size * 0.16);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(226, 240, 255, 0.4)';
+    ctx.lineWidth = Math.max(1, size * 0.05);
+    ctx.stroke();
+  }
+
+  #drawBackdrop() {
+    const ctx = this.ctx;
+    const w = this.width;
+    const h = this.height;
+    const size = this.cell;
+    const left = this.offsetX;
+    const top = this.offsetY;
+    const fieldW = COLS * size;
+    const fieldH = ROWS * size;
+
+    ctx.fillStyle = THEME.void;
+    ctx.fillRect(0, 0, w, h);
+
+    if (this.game?.settings.grid !== false) {
+      ctx.strokeStyle = THEME.grid;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let x = 1; x < COLS; x++) {
+        const px = Math.round(left + x * size) + 0.5;
+        ctx.moveTo(px, top);
+        ctx.lineTo(px, top + fieldH);
+      }
+      for (let y = 1; y < ROWS; y++) {
+        const py = Math.round(top + y * size) + 0.5;
+        ctx.moveTo(left, py);
+        ctx.lineTo(left + fieldW, py);
+      }
+      ctx.stroke();
+    }
+
+    // Bright wall around the well, so the play area reads as a container.
+    ctx.strokeStyle = THEME.wall;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(left + 1, top + 1, fieldW - 2, fieldH - 2);
+  }
+
+  #drawCells() {
+    const { board } = this.game;
+    for (let row = 0; row < board.rows; row++) {
+      const visual = this.#visualRow(row);
+      // Skip rows scrolled out of view or about to be removed.
+      if (visual < -1 || visual > ROWS) continue;
+      for (let col = 0; col < COLS; col++) {
+        const value = board.cells[row * COLS + col];
+        if (value === 0) continue;
+        this.#drawBlock(col, visual, CELL_COLORS[value]);
+      }
+    }
+    this.ctx.globalAlpha = 1;
+  }
+
+  /** The white contraction that sells a line clear. */
+  #drawClearFlash() {
+    if (!this.flash) return;
+    const ctx = this.ctx;
+    const size = this.cell;
+    const fieldW = COLS * size;
+    // The bar contracts over the collapse phase; at the very start it is full
+    // width and fully white.
+    const scale = 1 - this.collapse * 0.98;
+    const barWidth = fieldW * scale;
+    const centre = this.offsetX + fieldW / 2;
+    for (const row of this.game.pendingRows) {
+      const visual = this.#visualRow(row);
+      if (visual < -1 || visual > ROWS) continue;
+      const y = this.offsetY + visual * size;
+      ctx.save();
+      ctx.shadowColor = THEME.flash;
+      ctx.shadowBlur = size * 0.8;
+      ctx.fillStyle = THEME.flash;
+      ctx.globalAlpha = 1 - this.collapse * 0.5;
+      ctx.fillRect(centre - barWidth / 2, y + size * 0.08, barWidth, size * 0.84);
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  #drawActive() {
+    const game = this.game;
+    if (!game.active || game.isClearing()) return;
+    const color = colorOf(game.active.type);
+
+    if (game.settings.ghost !== false) {
+      const ghostY = game.ghostY();
+      if (ghostY !== game.active.y) {
+        const ghost = { ...game.active, y: ghostY };
+        for (const [x, y] of cellsOf(ghost)) {
+          if (y < VISIBLE_START) continue;
+          this.#drawGhost(x, y - VISIBLE_START);
+        }
+      }
+    }
+
+    const glow = this.reducedMotion ? 0 : this.cell * 0.55;
+    for (const [x, y] of game.activeCells()) {
+      if (y < VISIBLE_START) continue;
+      this.#drawBlock(x, y - VISIBLE_START, color, { glow });
+    }
+  }
+
+  // ----------------------------------------------------------- particles ---
+
+  /** Scatters sparks in cell coordinates, from a row or a cell list. */
+  #burst(cells, color, count) {
+    if (this.reducedMotion) return;
+    for (let i = 0; i < count; i++) {
+      const [cx, cy] = cells[i % cells.length];
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 2 + Math.random() * 7;
+      this.particles.push({
+        x: cx + 0.5,
+        y: cy + 0.5,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 1.5,
+        life: 0.45 + Math.random() * 0.5,
+        age: 0,
+        size: 0.06 + Math.random() * 0.12,
+        color,
+      });
+    }
+  }
+
+  addShake(amount) {
+    if (this.reducedMotion) return;
+    this.shake = Math.min(14, this.shake + amount);
+  }
+
+  /** Fans sparks out from the bottom edge of a hard-dropped piece. */
+  hardDrop(cells, color, distance) {
+    if (!cells?.length) return;
+    const lowest = new Map();
+    for (const [x, y] of cells) {
+      if (!lowest.has(x) || y > lowest.get(x)) lowest.set(x, y);
+    }
+    this.#burst(
+      [...lowest.entries()].map(([x, y]) => [x, y - VISIBLE_START]),
+      color,
+      8 + Math.min(24, distance * 2),
+    );
+    this.addShake(2 + Math.min(5, distance * 0.25));
+  }
+
+  /** Shakes a locked piece's resting row. */
+  lock(cells, color) {
+    this.#burst(
+      cells.map(([x, y]) => [x, y - VISIBLE_START]),
+      color,
+      4,
+    );
+    this.addShake(1);
+  }
+
+  lineClear(rows) {
+    const cells = [];
+    for (const row of rows) {
+      for (let x = 0; x < COLS; x++) cells.push([x, row - VISIBLE_START]);
+    }
+    this.#burst(cells, THEME.flash, 10 * rows.length);
+    this.addShake(3 + rows.length * 1.5);
+  }
+
+  #updateParticles(dt) {
+    const seconds = dt / 1000;
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
+      p.age += seconds;
+      if (p.age >= p.life) {
+        this.particles.splice(i, 1);
+        continue;
+      }
+      p.x += p.vx * seconds;
+      p.y += p.vy * seconds;
+      p.vy += 16 * seconds; // gravity, in cells per second squared
+    }
+  }
+
+  #drawParticles() {
+    if (this.particles.length === 0) return;
+    const ctx = this.ctx;
+    const size = this.cell;
+    for (const p of this.particles) {
+      const t = p.age / p.life;
+      const half = p.size * size;
+      ctx.globalAlpha = 1 - t;
+      ctx.fillStyle = p.color;
+      ctx.fillRect(
+        this.offsetX + p.x * size - half,
+        this.offsetY + p.y * size - half,
+        half * 2,
+        half * 2,
+      );
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ---------------------------------------------------------------- loop ---
+
+  render(game, dt) {
+    this.game = game;
+
+    if (this.canvas.width === 0) this.resize();
+
+    // Derive the clear animation's two phases from the game's countdown. The
+    // renderer never mutates state, so pausing simply freezes the effect.
+    const clearing = game.isClearing();
+    const progress = clearing ? 1 - game.clearTimer / CLEAR_ANIMATION_MS : 0;
+    this.flash = clearing && progress < FLASH_SHARE;
+    const raw = clearing ? (progress - FLASH_SHARE) / (1 - FLASH_SHARE) : 0;
+    this.collapse = clearing ? easeOutCubic(Math.min(1, Math.max(0, raw))) : 0;
+
+    this.#updateParticles(dt);
+    this.time += dt / 1000;
+    this.shake *= Math.exp(-dt / 110);
+    if (this.shake < 0.05) this.shake = 0;
+
+    const ctx = this.ctx;
+    // Base transform puts drawing in CSS pixels; the shake is layered on top so
+    // it moves the playfield but not the backdrop behind it.
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    this.#drawBackdrop();
+
+    ctx.save();
+    if (this.shake > 0) {
+      // Offsets come from a running clock rather than a random call, so the
+      // shake settles instead of buzzing.
+      ctx.translate(
+        Math.sin(this.time * 130) * this.shake,
+        Math.cos(this.time * 170) * this.shake,
+      );
+    }
+    this.#drawCells();
+    this.#drawActive();
+    this.#drawClearFlash();
+    this.#drawParticles();
+    ctx.restore();
+  }
+}
+
+/* ==== js/storage.js ==== */
+const KEYS = {
+  settings: 'tetris.settings',
+  highScore: 'tetris.highScore',
+};
+
+/**
+ * localStorage is not guaranteed to exist: Safari private mode historically
+ * threw on write, and embedded webviews can disable storage entirely. Probe it
+ * once at load and fall back to an in-memory Map so the game still runs and
+ * simply forgets everything on reload.
+ */
+const memory = new Map();
+let persistent = probe();
+
+function probe() {
+  try {
+    const marker = '__tetris_probe__';
+    window.localStorage.setItem(marker, '1');
+    window.localStorage.removeItem(marker);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readRaw(key) {
+  try {
+    return persistent ? window.localStorage.getItem(key) : memory.get(key) ?? null;
+  } catch {
+    return memory.get(key) ?? null;
+  }
+}
+
+function writeRaw(key, value) {
+  try {
+    if (persistent) window.localStorage.setItem(key, value);
+    else memory.set(key, value);
+  } catch {
+    // A quota error or a mid-session revocation: degrade to memory rather than
+    // letting a save take the whole game down.
+    persistent = false;
+    memory.set(key, value);
+  }
+}
+
+function readJSON(key, fallback) {
+  const raw = readRaw(key);
+  if (raw === null) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJSON(key, value) {
+  try {
+    writeRaw(key, JSON.stringify(value));
+  } catch {
+    // Nothing sensible to do; the caller does not need to know.
+  }
+}
+
+/** True when values survive a reload. */
+function isPersistent() {
+  return persistent;
+}
+
+function deepMerge(base, patch) {
+  const out = { ...base };
+  for (const key of Object.keys(base)) {
+    const value = base[key];
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      out[key] = deepMerge(value, (patch && patch[key]) || {});
+    } else if (patch && patch[key] !== undefined) {
+      out[key] = patch[key];
+    }
+  }
+  return out;
+}
+
+/** Reads settings, filling in any keys added since the user's last visit. */
+function loadSettings() {
+  return deepMerge(DEFAULT_SETTINGS, readJSON(KEYS.settings, {}));
+}
+
+function saveSettings(settings) {
+  writeJSON(KEYS.settings, settings);
+}
+
+function loadHighScore() {
+  const value = Number(readRaw(KEYS.highScore));
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function saveHighScore(score) {
+  writeRaw(KEYS.highScore, String(Math.max(0, Math.floor(score))));
+}
+
+/* ==== js/ui.js ==== */
+const $ = (id) => document.getElementById(id);
+
+/**
+ * Owns everything on the page that is not the canvas: the HUD and the
+ * modal screens. It reads game state but never mutates it —
+ * every interaction is reported back through callbacks.
+ */
+class UI {
+  constructor(callbacks = {}) {
+    this.cb = callbacks;
+    this.el = {
+      score: $('hud-score'),
+      level: $('hud-level'),
+      lines: $('hud-lines'),
+      high: $('hud-high'),
+      combo: $('hud-combo'),
+      screens: {
+        start: $('screen-start'),
+        pause: $('screen-pause'),
+        gameover: $('screen-gameover'),
+        settings: $('screen-settings'),
+      },
+      announce: $('announce'),
+      storageNote: $('storage-note'),
+    };
+    this.current = null;
+    this.rebindCleanup = null;
+    this.#wire();
+    if (!isPersistent()) this.el.storageNote?.classList.remove('is-hidden');
+  }
+
+  // ------------------------------------------------------------------ wiring ---
+
+  #wire() {
+    // Several screens share the same actions, so nav buttons are wired by
+    // behaviour rather than by id.
+    const nav = {
+      newgame: () => this.cb.onNewGame?.(),
+      resume: () => this.cb.onResume?.(),
+      pause: () => this.cb.onPauseToggle?.(),
+      settings: () => this.show('settings'),
+      close: () => this.close(),
+      menu: () => this.cb.onMenu?.(),
+    };
+    for (const button of document.querySelectorAll('[data-nav]')) {
+      button.addEventListener('click', () => nav[button.dataset.nav]?.());
+    }
+  }
+
+  /** Live HUD readout. Called every frame; only touches the DOM on change. */
+  setStats({ score, level, lines, highScore }) {
+    this.#text(this.el.score, score);
+    this.#text(this.el.level, level);
+    this.#text(this.el.lines, lines);
+    this.#text(this.el.high, highScore);
+  }
+
+  /** Shows a combo streak, or clears it when there is no streak. */
+  setCombo(count) {
+    if (!this.el.combo) return;
+    this.el.combo.classList.toggle('is-visible', count > 0);
+    this.#text(this.el.combo.querySelector('b'), count);
+  }
+
+  #text(node, value) {
+    if (!node) return;
+    const next = String(value);
+    if (node.textContent !== next) node.textContent = next;
+  }
+
+  // ----------------------------------------------------------------- screens ---
+
+  show(name) {
+    for (const [key, node] of Object.entries(this.el.screens)) {
+      if (!node) continue;
+      node.classList.toggle('is-open', key === name);
+    }
+    this.current = name;
+    // Move focus into the dialog so keyboard and screen-reader users land here.
+    const dialog = this.el.screens[name];
+    dialog?.querySelector('[data-autofocus], button, input')?.focus({ preventScroll: true });
+  }
+
+  close() {
+    // Leaving the settings screen abandons any half-finished rebind capture.
+    this.#cancelRebind();
+    this.show(null);
+  }
+
+  isOpen() {
+    return this.current !== null;
+  }
+
+  /** Fills in the game-over screen. */
+  showGameOver(summary, { highScore, isRecord }) {
+    this.#text($('final-score'), summary.score.toLocaleString());
+    this.#text($('final-level'), summary.level);
+    this.#text($('final-lines'), summary.lines);
+    this.#text($('final-high'), highScore.toLocaleString());
+    this.#text($('final-duration'), formatDuration(summary.durationMs));
+    $('stat-pieces').textContent = summary.pieces;
+    $('stat-singles').textContent = summary.singles;
+    $('stat-doubles').textContent = summary.doubles;
+    $('stat-triples').textContent = summary.triples;
+    $('stat-tetrises').textContent = summary.tetrises;
+
+    $('record-badge')?.classList.toggle('is-hidden', !isRecord);
+    this.show('gameover');
+  }
+
+  // ---------------------------------------------------------------- settings ---
+
+  /** Mirrors the settings object into the controls. */
+  syncSettings(settings) {
+    const set = (id, value) => {
+      const node = $(id);
+      if (node) node.checked = Boolean(value);
+    };
+    set('set-sound', settings.sound);
+    set('set-ghost', settings.ghost);
+    set('set-grid', settings.grid);
+
+    const das = $('set-das');
+    if (das) {
+      das.value = String(settings.das);
+      $('set-das-value').textContent = `${settings.das} ms`;
+    }
+    const arr = $('set-arr');
+    if (arr) {
+      arr.value = String(settings.arr);
+      $('set-arr-value').textContent = `${settings.arr} ms`;
+    }
+    this.syncKeyBindings(settings);
+  }
+
+  /** Rebuilds the rebind rows from the current bindings. */
+  syncKeyBindings(settings) {
+    const list = $('keybinding-list');
+    if (!list) return;
+    list.replaceChildren();
+    for (const [action, label] of Object.entries(ACTION_LABELS)) {
+      const row = document.createElement('li');
+      row.className = 'keybinding';
+
+      const name = document.createElement('span');
+      name.className = 'keybinding__name';
+      name.textContent = label;
+
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'keybinding__key';
+      button.textContent = prettyKey(settings.keybindings[action]);
+      button.setAttribute('aria-label', `Change key for ${label}`);
+
+      button.addEventListener('click', () => {
+        this.#listenForKey(action, button);
+      });
+
+      row.append(name, button);
+      list.append(row);
+    }
+  }
+
+  /** One-shot capture of the next key press for rebinding. */
+  #listenForKey(action, button) {
+    // Starting a new capture cancels the previous one, so a stray listener can
+    // never sit there swallowing a keypress later.
+    this.#cancelRebind();
+
+    for (const node of document.querySelectorAll('.keybinding__key.is-listening')) {
+      node.classList.remove('is-listening');
+      node.textContent = node.dataset.label || '—';
+    }
+
+    const previous = button.textContent;
+    button.dataset.label = previous;
+    button.classList.add('is-listening');
+    button.textContent = 'Press a key…';
+
+    const finish = (code) => {
+      button.classList.remove('is-listening');
+      button.textContent = prettyKey(code);
+      this.#cancelRebind();
+      if (code) this.cb.onRebind?.(action, code);
+    };
+
+    const onKeyDown = (event) => {
+      // Capture phase plus stopPropagation keeps the game from also acting on
+      // the key being bound.
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.code === 'Escape') {
+        button.classList.remove('is-listening');
+        button.textContent = previous;
+        this.#cancelRebind();
+      } else {
+        finish(event.code);
+      }
+    };
+
+    this.rebindCleanup = () => window.removeEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keydown', onKeyDown, true);
+  }
+
+  #cancelRebind() {
+    this.rebindCleanup?.();
+    this.rebindCleanup = null;
+  }
+
+  /** Announces a game event for assistive technology. */
+  announce(message) {
+    if (this.el.announce) this.el.announce.textContent = message;
+  }
+}
+
+function formatDuration(ms) {
+  const total = Math.floor(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/* ==== js/main.js ==== */
+/** Longest frame delta the simulation will accept, in ms. */
+const MAX_FRAME_MS = 100;
+
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+let settings = store.loadSettings();
+let highScore = store.loadHighScore();
+
+const pieceColor = (type) => CELL_COLORS[CELL_VALUE[type]] || CELL_COLORS[1];
+
+// ------------------------------------------------------------------ wiring ---
+
+const ui = new UI({
+  onNewGame: startGame,
+  onResume: () => {
+    game.resume();
+    ui.close();
+  },
+  onPauseToggle: togglePause,
+  onMenu: showMenu,
+  onRebind: rebind,
+});
+
+const audio = new AudioKit();
+audio.setEnabled(settings.sound);
+
+const game = new Game(handleEvent);
+game.applySettings(settings);
+
+const renderer = new Renderer(document.getElementById('board'), { reducedMotion });
+const input = new Input({
+  game,
+  getSettings: () => settings,
+  onPauseToggle: togglePause,
+  onGesture: () => audio.unlock(),
+});
+
+// -------------------------------------------------------------- event sink ---
+
+/** Routes one gameplay event to sound, visuals and announcements. */
+function handleEvent(event) {
+  audio.handle(event);
+
+  switch (event.type) {
+    case 'hardDrop':
+      renderer.hardDrop(event.cells, pieceColor(event.pieceType), event.distance);
+      break;
+    case 'lock':
+      renderer.lock(event.cells, pieceColor(event.pieceType));
+      break;
+    case 'clearStart':
+      renderer.lineClear(event.rows);
+      // The fanfare fires at the flash, not when the rows actually mutate.
+      audio.handle({ type: 'clear', count: event.count });
+      break;
+    case 'combo':
+      ui.setCombo(event.value);
+      break;
+    case 'clear':
+      if (event.combo > 0) ui.announce(`Combo ${event.combo}`);
+      if (event.count === 4) ui.announce('Tetris! Four lines.');
+      else if (event.count > 0) ui.announce(`${event.count} lines cleared.`);
+      break;
+    case 'levelUp':
+      ui.announce(`Level ${event.level}`);
+      break;
+    case 'gameOver':
+      finishGame();
+      break;
+    default:
+      break;
+  }
+}
+
+// -------------------------------------------------------------- game flow ---
+
+function startGame() {
+  game.applySettings(settings);
+  game.newGame();
+  ui.setCombo(0);
+  ui.close();
+  renderer.resize();
+  syncHud(true);
+}
+
+function togglePause() {
+  // The pause key works both ways, so it is allowed through while the pause
+  // screen is up. Any other modal, such as settings, still swallows it.
+  if (ui.isOpen() && ui.current !== 'pause') return;
+  if (game.state === 'playing') {
+    game.pause();
+    ui.show('pause');
+  } else if (game.state === 'paused') {
+    game.resume();
+    ui.close();
+  }
+}
+
+function showMenu() {
+  game.seedAttract();
+  ui.setCombo(0);
+  ui.show('start');
+}
+
+function finishGame() {
+  const summary = game.summary();
+  const previousHigh = highScore;
+  if (summary.score > highScore) {
+    highScore = summary.score;
+    store.saveHighScore(highScore);
+  }
+  ui.showGameOver(summary, {
+    highScore,
+    isRecord: summary.score > previousHigh,
+  });
+  ui.announce(`Game over. Final score ${summary.score}.`);
+}
+
+function rebind(action, code) {
+  // One key, one action: clear any other action already using this code.
+  for (const [other, bound] of Object.entries(settings.keybindings)) {
+    if (bound === code && other !== action) settings.keybindings[other] = 'Unbound';
+  }
+  settings.keybindings[action] = code;
+  store.saveSettings(settings);
+  ui.syncKeyBindings(settings);
+  ui.announce(`${ACTION_LABELS[action]} set to ${code.replace('Key', '')}`);
+}
+
+// ----------------------------------------------------------------- HUD sync ---
+
+function syncHud(force = false) {
+  ui.setStats({
+    score: game.score,
+    level: game.level,
+    lines: game.lines,
+    highScore,
+  });
+}
+
+// -------------------------------------------------------------------- loop ---
+
+let lastTime = performance.now();
+let frameId = 0;
+
+/**
+ * One requestAnimationFrame loop drives everything. There are no intervals
+ * anywhere in the game: gravity, DAS/ARR, lock delay and the clear animation
+ * are all advanced from here, so there is a single thing to cancel on teardown.
+ */
+function tick(now) {
+  frameId = requestAnimationFrame(tick);
+  // Clamp the delta so a backgrounded tab does not resume with a huge jump.
+  const dt = Math.min(now - lastTime, MAX_FRAME_MS);
+  lastTime = now;
+
+  input.update(dt);
+  game.update(dt);
+  renderer.render(game, dt);
+  syncHud();
+}
+
+function startLoop() {
+  if (frameId) return;
+  lastTime = performance.now();
+  frameId = requestAnimationFrame(tick);
+}
+
+function stopLoop() {
+  if (!frameId) return;
+  cancelAnimationFrame(frameId);
+  frameId = 0;
+}
+
+// ------------------------------------------------------------------ events ---
+
+function wireSettings() {
+  const bind = (id, event, apply) => {
+    document.getElementById(id)?.addEventListener(event, (e) => {
+      apply(e.currentTarget);
+      store.saveSettings(settings);
+      game.applySettings(settings);
+    });
+  };
+
+  bind('set-sound', 'change', (node) => {
+    audio.unlock();
+    settings.sound = node.checked;
+    audio.setEnabled(settings.sound);
+  });
+  bind('set-ghost', 'change', (node) => {
+    settings.ghost = node.checked;
+  });
+  bind('set-grid', 'change', (node) => {
+    settings.grid = node.checked;
+  });
+
+  // Sliders update the label live and save on every step, but are not re-synced
+  // from state mid-drag or the thumb would fight the pointer.
+  const slider = (id, labelId, key) => {
+    document.getElementById(id)?.addEventListener('input', (e) => {
+      settings[key] = Number(e.currentTarget.value);
+      const label = document.getElementById(labelId);
+      if (label) label.textContent = `${settings[key]} ms`;
+      store.saveSettings(settings);
+    });
+  };
+  slider('set-das', 'set-das-value', 'das');
+  slider('set-arr', 'set-arr-value', 'arr');
+}
+
+// Enter starts a run from the menu and restarts from the game-over screen, and
+// Escape backs out of a dialog. Both live here rather than in Input because
+// neither is a rebindable gameplay action.
+document.addEventListener('keydown', (event) => {
+  if (event.repeat) return;
+  if (event.target instanceof HTMLInputElement) return;
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+  if (event.code === 'Enter') {
+    if (ui.current === 'start' || ui.current === 'gameover') {
+      event.preventDefault();
+      startGame();
+    }
+    return;
+  }
+
+  if (event.code === 'Escape') {
+    // Pause and game over are excluded on purpose: the first has to stay
+    // resumable, and the second is waiting on a decision about the score.
+    if (ui.current === 'settings') {
+      event.preventDefault();
+      ui.close();
+    }
+  }
+});
+
+// A resize or a browser zoom changes the canvas box; ResizeObserver catches both.
+const observer = new ResizeObserver(() => renderer.resize());
+observer.observe(document.getElementById('board'));
+
+window.addEventListener('pagehide', () => {
+  stopLoop();
+  input.detach();
+  observer.disconnect();
+});
+
+// Losing the tab mid-run should not cost a life.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && game.state === 'playing') {
+    game.pause();
+    ui.show('pause');
+  }
+});
+
+// ----------------------------------------------------------------- bootstrap ---
+
+function boot() {
+  wireSettings();
+  ui.syncSettings(settings);
+  input.attach();
+  input.attachTouchPad(document.getElementById('touchpad'));
+
+  // A pre-filled board sits behind the menu so the page does not open on an
+  // empty grid.
+  game.seedAttract();
+  syncHud(true);
+  ui.show('start');
+  renderer.resize();
+  startLoop();
+
+  // Tells the inline watchdog in index.html that the module graph loaded. If it
+  // never gets set, the browser refused the modules and the page explains why
+  // instead of sitting there inert.
+  document.documentElement.dataset.gameBooted = 'true';
+}
+
+boot();
+})();
+</script>
+  </body>
+</html>
